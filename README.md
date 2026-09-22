@@ -86,4 +86,3 @@ make build
 ### Health
 
 - `GET /health` - Service health status
-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
