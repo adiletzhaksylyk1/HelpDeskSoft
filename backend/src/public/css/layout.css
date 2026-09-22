@@ -1,0 +1,954 @@
+/* Layout — Header, Sidebar, Split Pane & Responsive Breakpoints */
+
+/* Header */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--surface-border);
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 58px;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  transition: opacity 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+  user-select: none;
+}
+
+.brand-link:hover {
+  opacity: 0.9;
+  background-color: var(--surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+body.dark-theme .brand-link:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.brand-link:active {
+  transform: scale(0.985);
+}
+
+.aitu-logo-img {
+  height: 36px;
+  width: auto;
+  display: block;
+}
+
+.brand-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--surface-border);
+  margin: 0 4px;
+}
+
+.brand-title {
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.brand-badge {
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--success-subtle);
+  color: var(--success);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(5, 150, 105, 0.2);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Hamburger button (visible on mobile / tablet) */
+.hamburger-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.hamburger-btn:hover {
+  background: var(--surface-hover);
+}
+
+/* App Body */
+.app-body {
+  display: flex;
+  flex: 1;
+  height: calc(100vh - 58px);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Sidebar (Astana IT University Navigation) */
+.sidebar {
+  width: 240px;
+  background: var(--surface);
+  border-right: 1px solid var(--surface-border);
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+}
+
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  z-index: 99;
+}
+
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-group-header:hover {
+  background: var(--surface-hover);
+}
+
+.sidebar-group-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sidebar-group-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.sidebar-group-header:hover .sidebar-group-icon {
+  color: var(--primary);
+}
+
+.sidebar-group-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-chevron {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: rotate(0deg);
+}
+
+.sidebar-group.collapsed .sidebar-chevron {
+  transform: rotate(90deg);
+}
+
+.sidebar-group-body {
+  overflow: hidden;
+  transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+  max-height: 600px;
+  opacity: 1;
+}
+
+.sidebar-group.collapsed .sidebar-group-body {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Tree Guide Line */
+.sidebar-tree {
+  margin-left: 14px;
+  padding-left: 8px;
+  border-left: 1px solid var(--surface-border-subtle);
+  margin-top: 2px;
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Sub-items in Navigation (MYDU soft pill) */
+.nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.nav-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.nav-item.active {
+  background: var(--primary-subtle);
+  color: var(--primary);
+  font-weight: inherit;
+}
+
+body.dark-theme .nav-item.active {
+  background: rgba(0, 102, 255, 0.18);
+  color: #38BDF8;
+}
+
+.counter-pill {
+  font-size: 11px;
+  padding: 1.5px 7px;
+  border-radius: 10px;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.counter-pill.pill-subtle {
+  background: transparent;
+  font-weight: 700;
+}
+
+.pill-primary {
+  color: var(--primary);
+}
+
+body.dark-theme .pill-primary {
+  color: #38BDF8;
+}
+
+.pill-warning {
+  color: var(--warning);
+}
+
+body.dark-theme .pill-warning {
+  color: #FBBF24;
+}
+
+.nav-item-admin {
+  color: var(--purple);
+  font-weight: 600;
+}
+
+.sidebar-mailboxes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.search-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.detail-empty-icon {
+  font-size: 44px;
+  margin-bottom: 8px;
+}
+
+.detail-empty-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.detail-empty-desc {
+  font-size: 13px;
+}
+
+.ticket-content-pane {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.nav-item.active .counter-pill {
+  background: var(--primary);
+  color: white;
+}
+
+body.dark-theme .nav-item.active .counter-pill {
+  background: #0066FF;
+  color: white;
+}
+
+.nav-item.active .counter-pill.pill-subtle {
+  background: transparent;
+  color: inherit;
+}
+
+.nav-item.active .counter-pill.pill-primary,
+.nav-item.active .counter-pill.pill-subtle.pill-primary {
+  color: var(--primary);
+}
+
+body.dark-theme .nav-item.active .counter-pill.pill-primary,
+body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-primary {
+  color: #38BDF8;
+}
+
+.nav-item.active .counter-pill.pill-warning,
+.nav-item.active .counter-pill.pill-subtle.pill-warning {
+  color: var(--warning);
+}
+
+body.dark-theme .nav-item.active .counter-pill.pill-warning,
+body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-warning {
+  color: #FBBF24;
+}
+
+/* Split Pane Columns */
+.ticket-list-col {
+  width: 340px;
+  min-width: 280px;
+  border-right: 1px solid var(--surface-border-subtle);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  flex-shrink: 0;
+  transition: width 0.2s ease;
+}
+
+.ticket-detail-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* Mobile Back Button in Detail Topbar */
+.mobile-back-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 0;
+}
+
+/* Responsive Media Queries */
+
+/* Laptop / Narrow Desktop (<=1260px or DevTools docked) */
+@media (max-width: 1260px) {
+  .ticket-list-col {
+    width: 300px;
+  }
+
+  .detail-workspace {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .detail-main-flow {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    padding: 16px;
+    overflow: visible;
+  }
+
+  .flow-card {
+    flex: none;
+    height: auto;
+    overflow: visible;
+  }
+
+  .thread-scroll {
+    flex: none;
+    height: auto;
+    overflow: visible;
+    background: transparent;
+  }
+
+  .detail-sidebar-card {
+    width: 100%;
+    margin: 0 0 20px 0;
+    padding: 16px;
+    max-height: none;
+    flex-shrink: 0;
+  }
+
+  .detail-sidebar-card .action-buttons-group {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .detail-sidebar-card .action-buttons-group .btn {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  .detail-sidebar-card .sidebar-meta-section {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+}
+
+/* Tablet (768px - 1023px) */
+@media (max-width: 1023px) {
+  .hamburger-btn {
+    display: inline-flex;
+  }
+
+  .brand-divider,
+  .brand-badge {
+    display: none;
+  }
+
+  /* Off-canvas sidebar */
+  .sidebar {
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    width: 280px;
+    transform: translateX(-100%);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    z-index: 1000;
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop.mobile-open {
+    display: block;
+    top: 56px;
+    z-index: 999;
+  }
+
+  .ticket-list-col {
+    width: 300px;
+  }
+
+  .detail-workspace {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .detail-main-flow {
+    flex: none;
+    width: 100%;
+    padding: 16px;
+    overflow: visible;
+  }
+
+  .flow-card {
+    flex: none;
+    height: auto;
+    overflow: visible;
+  }
+
+  .thread-scroll {
+    flex: none;
+    height: auto;
+    overflow: visible;
+    background: transparent;
+  }
+
+  .detail-sidebar-card {
+    width: 100%;
+    margin: 0 0 20px 0;
+    padding: 16px;
+    max-height: none;
+    flex-shrink: 0;
+  }
+}
+
+/* Mobile (<768px) */
+@media (max-width: 767px) {
+  header {
+    padding: 0 10px;
+    height: 54px;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .brand {
+    gap: 6px;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+
+  .brand-title {
+    display: none;
+  }
+
+  .aitu-logo-img {
+    height: 26px;
+  }
+
+  .header-actions {
+    gap: 5px;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+
+  /* Compact User Profile: Show circle avatar only on mobile */
+  .user-info-col,
+  .user-profile-pill .chevron-icon {
+    display: none;
+  }
+
+  .user-profile-pill {
+    padding: 2px;
+    border-radius: 50%;
+  }
+
+  .user-avatar-circle {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+  }
+
+  .lang-pill {
+    padding: 4px 6px;
+    font-size: 11.5px;
+    gap: 2px;
+  }
+
+  .icon-pill-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+  }
+
+  .icon-pill-btn svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  /* Header Create Ticket button: Compact icon-only button so it fits perfectly on mobile */
+  .header-btn-label {
+    display: none;
+  }
+
+  .header-create-btn {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+
+  .header-btn-plus {
+    font-size: 19px;
+    line-height: 1;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  /* Full Screen Push Nav for Tickets */
+  .ticket-list-col {
+    width: 100%;
+    border-right: none;
+  }
+
+  .ticket-detail-col {
+    display: none;
+    width: 100%;
+  }
+
+  .app-body.ticket-view-open .ticket-list-col {
+    display: none;
+  }
+
+  .app-body.ticket-view-open .ticket-detail-col {
+    display: flex;
+  }
+
+  .mobile-back-btn {
+    display: inline-flex;
+  }
+
+  /* Single-column vertical scroll for ticket detail */
+  .detail-workspace {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .detail-main-flow {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    padding: 12px;
+    gap: 12px;
+    overflow: visible;
+  }
+
+  .flow-card {
+    flex: none;
+    height: auto;
+    overflow: visible;
+    border-radius: 12px;
+  }
+
+  .thread-scroll {
+    flex: none;
+    height: auto;
+    overflow: visible;
+    padding: 12px;
+    gap: 12px;
+    background: transparent;
+  }
+
+  .reply-box {
+    padding: 12px;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+  }
+
+  .reply-sender-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .reply-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .detail-sidebar-card {
+    width: 100%;
+    margin: 0 0 24px 0;
+    padding: 14px;
+    max-height: none;
+    flex-shrink: 0;
+  }
+
+  .detail-sidebar-card .action-buttons-group {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .detail-sidebar-card .action-buttons-group .btn {
+    width: 100%;
+  }
+
+  .detail-sidebar-card .sidebar-meta-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .detail-topbar {
+    padding: 12px 14px;
+  }
+
+  .detail-title-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .detail-subject {
+    font-size: 17px;
+  }
+
+  .bc-active {
+    max-width: calc(100vw - 160px);
+  }
+
+  .msg-card {
+    padding: 12px 14px;
+    border-radius: 10px;
+  }
+}
+
+/* ==========================================================================
+   Full-Screen Dedicated Authorization Gate (Astana IT University / DU Portal)
+   ========================================================================== */
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #f0f2f5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+body.dark-theme .auth-screen {
+  background-color: #0b0f17;
+}
+
+.auth-topbar {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 10001;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03);
+  padding: 38px 32px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-sizing: border-box;
+  animation: authCardFadeIn 0.3s ease-out;
+}
+
+@keyframes authCardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+body.dark-theme .auth-card {
+  background: #161c26;
+  border-color: #273142;
+  box-shadow: 0 10px 35px -5px rgba(0, 0, 0, 0.45);
+}
+
+.auth-card-logo {
+  height: 52px;
+  width: auto;
+  margin-bottom: 20px;
+  display: block;
+}
+
+.auth-card-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 6px 0;
+  letter-spacing: -0.015em;
+}
+
+body.dark-theme .auth-card-title {
+  color: #f3f4f6;
+}
+
+.auth-card-subtitle {
+  font-size: 13.5px;
+  color: #6b7280;
+  margin: 0 0 22px 0;
+}
+
+body.dark-theme .auth-card-subtitle {
+  color: #9ca3af;
+}
+
+.auth-card-alert {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  margin-bottom: 18px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+}
+
+.auth-card-alert.info {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+}
+
+body.dark-theme .auth-card-alert.info {
+  background: rgba(30, 64, 175, 0.22);
+  border-color: #1e40af;
+  color: #93c5fd;
+}
+
+.auth-card-alert.error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+body.dark-theme .auth-card-alert.error {
+  background: rgba(185, 28, 28, 0.22);
+  border-color: #991b1b;
+  color: #fca5a5;
+}
+
+.auth-card-alert.first-login {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+body.dark-theme .auth-card-alert.first-login {
+  background: rgba(6, 95, 70, 0.25);
+  border-color: #047857;
+  color: #6ee7b7;
+}
+
+.auth-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-field {
+  width: 100%;
+  text-align: left;
+}
+
+.auth-field-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #111827;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-sizing: border-box;
+}
+
+.auth-field-input:focus {
+  border-color: #0062ff;
+  box-shadow: 0 0 0 3px rgba(0, 98, 255, 0.15);
+}
+
+body.dark-theme .auth-field-input {
+  background: #0e131d;
+  border-color: #2b3547;
+  color: #f3f4f6;
+}
+
+body.dark-theme .auth-field-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+.auth-field-input::placeholder {
+  color: #9ca3af;
+}
+
+.auth-submit-btn {
+  width: 100%;
+  height: 44px;
+  background: #0062ff;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.auth-submit-btn:hover {
+  background: #0050d4;
+}
+
+.auth-submit-btn:active {
+  transform: scale(0.99);
+}
+
+.auth-submit-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+#app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}

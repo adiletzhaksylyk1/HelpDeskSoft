@@ -1,0 +1,672 @@
+/* Forms, Modals & Toast Notifications */
+
+/* Forms and Inputs */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.form-input,
+.form-select {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--text);
+  font-size: 13.5px;
+  outline: none;
+  font-family: inherit;
+  transition: border 0.15s, box-shadow 0.15s;
+}
+
+.form-input:focus,
+.form-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
+}
+
+.form-input:disabled {
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+select.input-select {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+select.input-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
+}
+
+body.dark-theme .form-input,
+body.dark-theme .form-select,
+body.dark-theme select.input-select {
+  background: #18191D;
+  border-color: #383A42;
+  color: #F4F4F6;
+}
+
+body.dark-theme select.input-select option {
+  background: #222328;
+  color: #F4F4F6;
+}
+
+/* Modals (MYDU Style - 16px radius, soft shadow) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.modal-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 16px;
+  padding: 24px 28px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+.modal-card.modal-lg {
+  max-width: 840px;
+}
+
+body.dark-theme .modal-card {
+  background: #222328;
+  border-color: #2F3138;
+  color: #F4F4F6;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.modal-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background: #FFFFFF;
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0, 21, 30, 0.12);
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  pointer-events: auto;
+  animation: slideInRight 0.25s ease-out;
+}
+
+body.dark-theme .toast {
+  background: #161B22;
+  border-color: #30363D;
+  color: #F0F6FC;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* Mobile Adjustments for Modals and Toasts */
+@media (max-width: 767px) {
+  .modal-overlay {
+    padding: 0;
+  }
+
+  .modal-card {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    padding: 20px 16px;
+    border: none;
+  }
+
+  .toast-container {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+  }
+
+  .toast {
+    width: auto;
+  }
+}
+
+/* Modal and Form Utilities */
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.modal-title-nobottom {
+  margin-bottom: 0;
+}
+
+.form-hint {
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+
+.form-check-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.form-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.form-check-label {
+  margin: 0;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.form-grid-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.form-grid-2col-sm {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.form-grid-2col-compact {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.form-grid-host-port {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 10px;
+}
+
+.form-group-spaced {
+  margin-bottom: 14px;
+}
+
+.label-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.label-subtext {
+  font-size: 11px;
+  font-weight: normal;
+  color: var(--text-muted);
+}
+
+.info-notice-box {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin: 6px 0 12px;
+  background: rgba(0, 120, 212, 0.08);
+  border-left: 3px solid #0078d4;
+  padding: 8px 12px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.label-primary {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.section-heading-sm {
+  font-weight: 600;
+  font-size: 13px;
+  margin: 8px 0 6px;
+  color: var(--text);
+}
+
+.checkbox-row-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.settings-section-divider {
+  border-top: 1px solid var(--surface-border);
+  padding-top: 10px;
+  margin-top: 8px;
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.settings-section-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.checkbox-row-muted {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.status-message-row {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Multi-Select Component for Role / Department Selection */
+.role-multiselect-container {
+  position: relative;
+  width: 100%;
+}
+
+.role-multiselect-trigger {
+  min-height: 42px;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.role-multiselect-trigger:focus,
+.role-multiselect-container.open .role-multiselect-trigger {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
+}
+
+.role-multiselect-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.role-placeholder {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.role-multiselect-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.role-multiselect-count-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--primary);
+  color: #FFFFFF;
+  border-radius: 12px;
+  padding: 1px 7px;
+  line-height: 1.4;
+}
+
+.role-multiselect-chevron {
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.role-multiselect-container.open .role-multiselect-chevron {
+  transform: rotate(180deg);
+}
+
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  border: 1px solid rgba(0, 102, 255, 0.18);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.role-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.15s, background 0.15s;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.role-chip-btn:hover {
+  opacity: 1;
+  background: rgba(0, 102, 255, 0.2);
+}
+
+.role-multiselect-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  z-index: 1050;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.role-multiselect-container.open .role-multiselect-popover {
+  display: block;
+  animation: modalFadeIn 0.15s ease-out;
+}
+
+.role-multiselect-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+  user-select: none;
+}
+
+.role-multiselect-item:hover {
+  background: var(--surface-hover);
+}
+
+.role-multiselect-item.selected {
+  background: var(--primary-subtle);
+}
+
+.role-checkbox {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.role-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.role-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.role-item-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.role-multiselect-separator {
+  height: 1px;
+  background: var(--surface-border-subtle);
+  margin: 4px 6px;
+}
+
+body.dark-theme .role-chip {
+  background: rgba(0, 102, 255, 0.18);
+  color: #38BDF8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+body.dark-theme .role-chip-btn:hover {
+  background: rgba(56, 189, 248, 0.25);
+}
+
+body.dark-theme .role-multiselect-item.selected {
+  background: rgba(0, 102, 255, 0.16);
+}
+
+body.dark-theme .role-multiselect-popover {
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* Table-level Multi-Select Component */
+.tbl-multiselect-wrap {
+  position: relative;
+  display: inline-block;
+  min-width: 170px;
+  max-width: 280px;
+}
+
+.tbl-multiselect-trigger {
+  min-height: 32px;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 7px;
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.tbl-multiselect-trigger:hover {
+  background: var(--surface-hover);
+  border-color: var(--primary);
+}
+
+.tbl-multiselect-wrap.open .tbl-multiselect-trigger {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(0, 102, 255, 0.15);
+}
+
+.tbl-multiselect-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.tbl-role-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1.5px 6px;
+  border-radius: 5px;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  border: 1px solid rgba(0, 102, 255, 0.18);
+  line-height: 1.3;
+}
+
+.tbl-role-badge-all {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.tbl-multiselect-arrow {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+
+.tbl-multiselect-wrap.open .tbl-multiselect-arrow {
+  transform: rotate(180deg);
+}
+
+.tbl-multiselect-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1060;
+  width: 250px;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 9px;
+  box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.18), 0 6px 10px -4px rgba(0, 0, 0, 0.1);
+  padding: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.tbl-multiselect-wrap.open .tbl-multiselect-popover {
+  display: block;
+  animation: modalFadeIn 0.15s ease-out;
+}
+
+.tbl-multiselect-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px 6px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+  margin-bottom: 4px;
+}
+
+.tbl-ms-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.tbl-ms-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.tbl-ms-close-btn:hover {
+  color: var(--text);
+}
+
+body.dark-theme .tbl-role-badge {
+  background: rgba(0, 102, 255, 0.18);
+  color: #38BDF8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+body.dark-theme .tbl-multiselect-popover {
+  background: var(--surface);
+  border-color: var(--surface-border);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6);
+}
+
+.tbl-multiselect-wrap.dropup .tbl-multiselect-popover {
+  top: auto;
+  bottom: calc(100% + 4px);
+  box-shadow: 0 -10px 25px -4px rgba(0, 0, 0, 0.18), 0 -6px 10px -4px rgba(0, 0, 0, 0.1);
+}
+
+body.dark-theme .tbl-multiselect-wrap.dropup .tbl-multiselect-popover {
+  box-shadow: 0 -12px 28px rgba(0, 0, 0, 0.6);
+}
+

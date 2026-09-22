@@ -1,0 +1,64 @@
+/* Design System Tokens — Astana IT University (MYDU Design Code) */
+:root {
+  --bg: #F8FAFC;
+  --surface: #FFFFFF;
+  --surface-border: #E2E8F0;
+  --surface-border-subtle: #F1F5F9;
+  --surface-hover: #F8FAFC;
+  --surface-active: #EBF5FF;
+
+  --text: #0F172A;
+  --text-secondary: #334155;
+  --text-muted: #64748B;
+  --text-subtle: #94A3B8;
+
+  --primary: #0066FF;
+  --primary-hover: #0052CC;
+  --primary-subtle: #EBF5FF;
+  --aitu-cyan: #0284C7;
+  --aitu-dark: #0F172A;
+
+  --success: #059669;
+  --success-subtle: #ECFDF5;
+  --warning: #D97706;
+  --warning-subtle: #FFFBEB;
+  --danger: #DC2626;
+  --danger-subtle: #FEF2F2;
+  --purple: #4F46E5;
+  --purple-subtle: #EEF2FF;
+}
+
+body.dark-theme {
+  --bg: #18191D;
+  --surface: #222328;
+  --surface-border: #2F3138;
+  --surface-border-subtle: #27282E;
+  --surface-hover: #2B2D34;
+  --surface-active: #1E2D4A;
+
+  --text: #F4F4F6;
+  --text-secondary: #D4D4D8;
+  --text-muted: #A1A1AA;
+  --text-subtle: #71717A;
+
+  --primary: #0066FF;
+  --primary-hover: #2563EB;
+  --primary-subtle: rgba(0, 102, 255, 0.16);
+
+  --aitu-dark: #F4F4F6;
+  --aitu-cyan: #38BDF8;
+  --aitu-cyan-subtle: rgba(56, 189, 248, 0.15);
+
+  --success: #4ADE80;
+  --success-subtle: rgba(34, 197, 94, 0.14);
+
+  --warning: #FBBF24;
+  --warning-subtle: rgba(245, 158, 11, 0.14);
+
+  --danger: #F87171;
+  --danger-subtle: rgba(239, 68, 68, 0.14);
+
+  --purple: #818CF8;
+  --purple-subtle: rgba(99, 102, 241, 0.14);
+}
+

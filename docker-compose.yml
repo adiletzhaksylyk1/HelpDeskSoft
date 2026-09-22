@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: helpdesk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
+      POSTGRES_DB: helpdesk
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d helpdesk" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: helpdesk-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      APP_PORT: "3000"
+      APP_HOST: "0.0.0.0"
+      NODE_ENV: "production"
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/helpdesk"
+      STORAGE_DIR: "/app/storage"
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET must be set}"
+      CORS_ORIGIN: "${CORS_ORIGIN:-*}"
+      IMAP_HOST: "${IMAP_HOST:-imap.example.com}"
+      IMAP_PORT: "${IMAP_PORT:-993}"
+      IMAP_USER: "${IMAP_USER:-support@example.com}"
+      IMAP_PASSWORD: "${IMAP_PASSWORD:-secret}"
+      IMAP_SECURE: "${IMAP_SECURE:-true}"
+      SMTP_HOST: "${SMTP_HOST:-smtp.example.com}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-support@example.com}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-secret}"
+      SMTP_SECURE: "${SMTP_SECURE:-false}"
+      SMTP_FROM: "${SMTP_FROM:-support@example.com}"
+
+volumes:
+  pgdata:
