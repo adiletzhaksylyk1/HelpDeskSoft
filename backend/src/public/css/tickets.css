@@ -87,7 +87,9 @@ body.dark-theme .search-clear-btn:hover {
 .ticket-scroll {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 10px 14px;
+  min-width: 0;
 }
 
 /* Ticket Cards */
@@ -135,6 +137,19 @@ body.dark-theme .ticket-card.selected {
   justify-content: space-between;
   font-size: 11.5px;
   color: var(--text-muted);
+  gap: 8px;
+  min-width: 0;
+}
+
+.card-sender-email {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta-top > span:last-child {
+  flex-shrink: 0;
 }
 
 .card-title {

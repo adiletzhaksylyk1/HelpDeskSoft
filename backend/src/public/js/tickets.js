@@ -1,10 +1,59 @@
 // Tickets Module — Filtering, Rendering, Detail View, Replies & Attachments
 
+let ticketPage = 1,
+  ticketTotalPages = 1,
+  ticketListRequest = 0,
+  ticketDetailRequest = 0;
+let ticketStats = { total: 0, groups: [] };
+const ticketDrafts = new Map();
+let attachmentBlobUrls = [];
+let uploadLimits = {
+  maxAttachmentBytes: 10485760,
+  maxMessageBytes: 26214400,
+  maxAttachments: 20,
+};
+let searchTimer;
+let ticketSearchQuery = "";
+function searchTickets(event) {
+  const input = document.getElementById("search-bar");
+  // Credential autofill must not become a ticket filter, even if it fires input.
+  if (
+    event &&
+    (document.activeElement !== input || input.matches(":autofill"))
+  ) {
+    input.value = ticketSearchQuery;
+    return;
+  }
+  ticketSearchQuery = input?.value || "";
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    ticketPage = 1;
+    loadAllTickets();
+  }, 250);
+}
+function saveDraft() {
+  if (selectedTicketId)
+    ticketDrafts.set(selectedTicketId, {
+      ...ticketDrafts.get(selectedTicketId),
+      text: document.getElementById("reply-text")?.value || "",
+      files: [...selectedReplyFiles],
+      pending: { ...pendingChanges },
+      original: currentTicketOriginal ? { ...currentTicketOriginal } : null,
+      mailbox: document.getElementById("reply-mailbox-select")?.value,
+    });
+}
+function showTicketError(message) {
+  const el = document.getElementById("ticket-error");
+  if (el) {
+    el.textContent = message;
+    el.hidden = !message;
+  }
+}
 let allTickets = [];
 let displayedTickets = [];
 let selectedTicketId = null;
-let activeFilters = { status: '', priority: '', mailbox: '' };
-let activeScope = 'all';
+let activeFilters = { status: "", priority: "", mailbox: "" };
+let activeScope = "all";
 
 let currentTicketOriginal = null;
 let pendingChanges = {};
@@ -14,228 +63,294 @@ let lastKnownReplyCount = 0;
 let collisionDetected = false;
 
 function updateAssigneeBanner(ticket) {
-  const banner = document.getElementById('d-assignee-banner');
+  const banner = document.getElementById("d-assignee-banner");
   if (!banner) return;
   const dict = I18N[currentLang] || I18N.RU;
 
-  if (ticket && ticket.assigneeId && authState.user && ticket.assigneeId !== authState.user.id) {
+  if (
+    ticket &&
+    ticket.assigneeId &&
+    authState.user &&
+    ticket.assigneeId !== authState.user.id
+  ) {
     const assignedUser = users.find((u) => u.id === ticket.assigneeId);
-    const assigneeName = ticket.assignee ? ticket.assignee.name : (assignedUser ? assignedUser.name : 'Коллега');
-    banner.innerHTML = `<span>${dict.collision_assigned_warning || 'Внимание: Заявка закреплена за специалистом: '}<strong>${escapeHtml(assigneeName)}</strong></span>`;
-    banner.style.display = 'flex';
+    const assigneeName = ticket.assignee
+      ? ticket.assignee.name
+      : assignedUser
+        ? assignedUser.name
+        : "Коллега";
+    banner.innerHTML = `<span>${dict.collision_assigned_warning || "Внимание: Заявка закреплена за специалистом: "}<strong>${escapeHtml(assigneeName)}</strong></span>`;
+    banner.style.display = "flex";
   } else {
-    banner.style.display = 'none';
+    banner.style.display = "none";
   }
 }
 
+function renderReplyCard(reply, ticketId, senderEmail) {
+  const card = document.createElement("div");
+  card.className =
+    "msg-card" + (reply.senderType === "EMPLOYEE" ? " msg-employee" : "");
+  card.dataset.replyId = reply.id;
+  const header = document.createElement("div");
+  header.className = "msg-header";
+  const author = document.createElement("span");
+  author.textContent = reply.authorName || senderEmail || reply.senderType;
+  const state = document.createElement("span");
+  state.className = "msg-badge";
+  state.textContent = t("delivery_" + reply.deliveryStatus);
+  const time = document.createElement("time");
+  time.textContent = new Date(reply.createdAt).toLocaleString();
+  const body = document.createElement("div");
+  body.className = "msg-body";
+  body.innerHTML = formatMessageBody(reply.body);
+  header.append(author, state, time);
+  card.append(header, body);
+  if (reply.deliveryError) {
+    const error = document.createElement("p");
+    error.textContent = reply.deliveryError;
+    card.append(error);
+  }
+  if (["failed", "uncertain"].includes(reply.deliveryStatus)) {
+    const retry = document.createElement("button");
+    retry.className = "btn btn-secondary";
+    retry.textContent = t("retry_delivery");
+    retry.addEventListener("click", async () => {
+      const uncertain = reply.deliveryStatus === "uncertain";
+      if (!confirm(t(uncertain ? "retry_uncertain" : "retry_confirm"))) return;
+      retry.disabled = true;
+      try {
+        await apiRequest(
+          "/api/tickets/" + ticketId + "/replies/" + reply.id + "/retry",
+          {
+            method: "POST",
+            body: JSON.stringify({ confirmPossibleDuplicate: uncertain }),
+          },
+        );
+        card.replaceWith(
+          renderReplyCard(
+            { ...reply, deliveryStatus: "pending", deliveryError: null },
+            ticketId,
+            senderEmail,
+          ),
+        );
+      } catch (error) {
+        showTicketError(error.message);
+        retry.disabled = false;
+      }
+    });
+    card.append(retry);
+  }
+  return card;
+}
 function startCollisionPoller(ticketId) {
   if (collisionPollerTimer) clearInterval(collisionPollerTimer);
   collisionPollerTimer = setInterval(async () => {
-    if (selectedTicketId !== ticketId) {
-      clearInterval(collisionPollerTimer);
-      collisionPollerTimer = null;
-      return;
-    }
-
+    if (selectedTicketId !== ticketId || document.hidden) return;
     try {
-      const res = await fetch(`/api/tickets/${ticketId}`, { headers: getAuthHeaders() });
-      if (!res.ok) return;
-      const updated = await res.json();
-      const currentReplies = updated.replies || [];
-
-      if (currentReplies.length > lastKnownReplyCount) {
-        const newReplies = currentReplies.slice(lastKnownReplyCount);
-        const hasColleagueReply = newReplies.some((r) => r.senderType === 'EMPLOYEE');
-
-        if (hasColleagueReply) {
-          collisionDetected = true;
-          const banner = document.getElementById('d-collision-banner');
-          const dict = I18N[currentLang] || I18N.RU;
-          if (banner) {
-            banner.innerHTML = `<span>${dict.collision_reply_alert || 'Внимание: Коллега только что отправил ответ на эту заявку! Проверьте новые сообщения ниже перед отправкой.'}</span>`;
-            banner.style.display = 'flex';
-          }
-        }
-
-        const thread = document.getElementById('d-thread');
-        if (thread) {
-          newReplies.forEach((rep) => {
-            const repMsg = document.createElement('div');
-            const isEmp = rep.senderType === 'EMPLOYEE';
-            repMsg.className = `msg-card ${isEmp ? 'msg-employee' : ''}`;
-            repMsg.style.animation = 'slideInDown 0.3s ease-out';
-            const empName = rep.authorName || 'Support Agent';
-            repMsg.innerHTML = `
-              <div class="msg-header">
-                <div class="msg-author">
-                  <span class="msg-author-email">${isEmp ? escapeHtml(empName) : escapeHtml(updated.senderEmail)}</span>
-                  <span class="msg-badge ${isEmp ? 'msg-badge-emp' : 'msg-badge-cust'}">${rep.senderType}</span>
-                </div>
-                <div class="msg-time">${new Date(rep.createdAt).toLocaleString()}</div>
-              </div>
-              <div class="msg-body">${formatMessageBody(rep.body)}</div>
-            `;
-            thread.appendChild(repMsg);
-          });
-          thread.scrollTop = thread.scrollHeight;
-        }
-
-        lastKnownReplyCount = currentReplies.length;
-
-        if (updated.assigneeId && updated.assigneeId !== currentTicketOriginal.assigneeId) {
-          currentTicketOriginal.assigneeId = updated.assigneeId;
-          const dAssignee = document.getElementById('d-assignee-select');
-          if (dAssignee) dAssignee.value = updated.assigneeId;
-          updateAssigneeBanner(updated);
-        }
-
-        if (updated.status && updated.status !== currentTicketOriginal.status) {
-          currentTicketOriginal.status = updated.status;
-          const dStatus = document.getElementById('d-status-select');
-          if (dStatus) dStatus.value = updated.status;
-        }
+      const updated = await apiRequest("/api/tickets/" + ticketId);
+      if (selectedTicketId !== ticketId) return;
+      const thread = document.getElementById("d-thread");
+      for (const reply of updated.replies || []) {
+        const old = thread.querySelector('[data-reply-id="' + reply.id + '"]');
+        if (old)
+          old.replaceWith(
+            renderReplyCard(reply, ticketId, updated.senderEmail),
+          );
       }
-    } catch {
-      // Background poll failure ignored
+      if (updated.replyCount > lastKnownReplyCount) {
+        const newer = await apiRequest(
+          "/api/tickets/" +
+            ticketId +
+            "/replies?offset=" +
+            lastKnownReplyCount +
+            "&limit=100",
+        );
+        if (selectedTicketId !== ticketId) return;
+        for (const reply of newer)
+          if (!thread.querySelector('[data-reply-id="' + reply.id + '"]'))
+            thread.append(
+              renderReplyCard(reply, ticketId, updated.senderEmail),
+            );
+        lastKnownReplyCount += newer.length;
+        const banner = document.getElementById("d-collision-banner");
+        banner.textContent = t("conversation_updated");
+        banner.style.display = "flex";
+        await loadTicketAttachments(ticketId);
+      }
+      updateAssigneeBanner(updated);
+      if (!Object.keys(pendingChanges).length && currentTicketOriginal) {
+        currentTicketOriginal = {
+          id: updated.id,
+          version: updated.version,
+          status: updated.status,
+          priority: updated.priority,
+          assigneeId: updated.assigneeId || "",
+        };
+        document.getElementById("d-status-select").value = updated.status;
+        document.getElementById("d-priority-select").value = updated.priority;
+        document.getElementById("d-assignee-select").value =
+          updated.assigneeId || "";
+      }
+    } catch (error) {
+      showTicketError(t("refresh_failed"));
     }
   }, 7000);
 }
 
 async function loadAllTickets() {
-  try {
-    let url = '/api/tickets?limit=100';
-    if (activeScope === 'my' && authState.token) {
-      url += '&my_tickets=true';
-    } else if (activeScope === 'unassigned') {
-      url += '&assignee=unassigned';
-    }
-
-    const res = await fetch(url, { headers: getAuthHeaders() });
-    if (res.ok) {
-      const data = await res.json();
-      const newFetched = data.data || [];
-      if (allTickets.length > 0 && newFetched.length > 0) {
-        const existingIds = new Set(allTickets.map((t) => t.id));
-        const brandNewTickets = newFetched.filter((t) => !existingIds.has(t.id));
-        brandNewTickets.forEach((t) => {
-          const isCritical = t.priority === 'CRITICAL' || t.priority === 'HIGH';
-          addNotification({
-            titleKey: isCritical ? 'notif_urgent_ticket' : 'notif_new_ticket',
-            message: (t.subject || 'Без темы') + ' — ' + (t.senderEmail || 'клиент'),
-            ticketId: t.id,
-            ticketNumber: t.id.slice(0, 8),
-            type: isCritical ? 'warning' : 'ticket',
-          });
-        });
-      }
-      allTickets = newFetched;
-      updateCounters();
-      applyFiltersAndRender();
-      if (window.location.search.includes('selectFirst') && allTickets.length > 0 && !selectedTicketId) {
-        selectTicket(allTickets[0].id);
-      }
-
-    }
-  } catch (e) {
-    console.error('Error fetching tickets:', e);
+  if (!authState.token) return;
+  const request = ++ticketListRequest;
+  const query = new URLSearchParams({ page: String(ticketPage), limit: "30" });
+  const scope = new URLSearchParams();
+  if (activeScope === "my") scope.set("my_tickets", "true");
+  if (activeScope === "unassigned") scope.set("assignee", "unassigned");
+  for (const [key, value] of scope) query.set(key, value);
+  if (activeFilters.status) query.set("status", activeFilters.status);
+  if (activeFilters.priority) query.set("priority", activeFilters.priority);
+  if (activeFilters.mailbox) {
+    const mb = mailboxChannels.find(
+      (m) =>
+        m.email === activeFilters.mailbox || m.id === activeFilters.mailbox,
+    );
+    if (mb) query.set("mailbox_id", mb.id);
   }
+  const searchInput = document.getElementById("search-bar");
+  if (searchInput) searchInput.value = ticketSearchQuery;
+  const search = ticketSearchQuery.trim();
+  if (search) query.set("search", search);
+  try {
+    const [res, stats] = await Promise.all([
+      apiFetch("/api/tickets?" + query, { headers: getAuthHeaders() }),
+      apiFetch("/api/tickets/stats?" + scope, { headers: getAuthHeaders() }),
+    ]);
+    if (!res.ok)
+      throw new Error((await res.json()).message || "Unable to load tickets");
+    const data = validateTicketPage(await res.json());
+    if (request !== ticketListRequest) return;
+    allTickets = data.data;
+    displayedTickets = allTickets;
+    ticketTotalPages = data.totalPages;
+    if (stats.ok) ticketStats = await stats.json();
+    if (ticketPage > ticketTotalPages) {
+      ticketPage = ticketTotalPages;
+      return loadAllTickets();
+    }
+    showTicketError("");
+    updateCounters();
+    renderTicketList();
+    const page = document.getElementById("ticket-page");
+    if (page)
+      page.textContent =
+        ticketPage + " / " + ticketTotalPages + " (" + data.total + ")";
+    document.getElementById("ticket-prev").disabled = ticketPage <= 1;
+    document.getElementById("ticket-next").disabled =
+      ticketPage >= ticketTotalPages;
+  } catch (error) {
+    if (request === ticketListRequest) showTicketError(error.message);
+  }
+}
+function changeTicketPage(delta) {
+  ticketPage = Math.max(1, Math.min(ticketTotalPages, ticketPage + delta));
+  loadAllTickets();
 }
 
 function setScope(scope) {
-  if (scope === 'my' && !authState.user) {
-    openLoginModal('Please log in with your corporate account to view assigned tickets');
+  if (scope === "my" && !authState.user) {
+    openLoginModal(
+      "Please log in with your corporate account to view assigned tickets",
+    );
     return;
   }
   activeScope = scope;
+  ticketPage = 1;
   updateScopeUI();
   loadAllTickets();
 }
 
 function updateScopeUI() {
-  document.querySelectorAll('.scope-nav-item').forEach((el) => el.classList.remove('active'));
+  document
+    .querySelectorAll(".scope-nav-item")
+    .forEach((el) => el.classList.remove("active"));
   const target = document.getElementById(`scope-${activeScope}`);
-  if (target) target.classList.add('active');
+  if (target) target.classList.add("active");
 }
 
 function updateCounters() {
-  const count = (k, v) => allTickets.filter((t) => t[k] === v).length;
-  ['waiting', 'progress', 'resolved'].forEach((s) => {
+  const count = (key, value) =>
+    ticketStats.groups
+      .filter((g) => g[key] === value)
+      .reduce((n, g) => n + Number(g.total), 0);
+  ["waiting", "progress", "resolved"].forEach((s) => {
     const el = document.getElementById(`cnt-${s}`);
-    if (el) el.textContent = count('status', s === 'progress' ? 'IN_PROGRESS' : s.toUpperCase());
+    if (el)
+      el.textContent = count(
+        "status",
+        s === "progress" ? "IN_PROGRESS" : s.toUpperCase(),
+      );
   });
-  ['critical', 'high', 'medium', 'low'].forEach((p) => {
+  ["critical", "high", "medium", "low"].forEach((p) => {
     const el = document.getElementById(`cnt-${p}`);
-    if (el) el.textContent = count('priority', p.toUpperCase());
+    if (el) el.textContent = count("priority", p.toUpperCase());
   });
-  const cntAll = document.getElementById('cnt-all');
-  if (cntAll) cntAll.textContent = allTickets.length;
-  const cntAllStatus = document.getElementById('cnt-all-status');
-  if (cntAllStatus) cntAllStatus.textContent = allTickets.length;
-  const cntPAll = document.getElementById('cnt-p-all');
-  if (cntPAll) cntPAll.textContent = allTickets.length;
-  if (typeof updateMailboxCounters === 'function') updateMailboxCounters();
+  const cntAll = document.getElementById("cnt-all");
+  if (cntAll) cntAll.textContent = ticketStats.total;
+  const cntAllStatus = document.getElementById("cnt-all-status");
+  if (cntAllStatus) cntAllStatus.textContent = ticketStats.total;
+  const cntPAll = document.getElementById("cnt-p-all");
+  if (cntPAll) cntPAll.textContent = ticketStats.total;
+  if (typeof updateMailboxCounters === "function") updateMailboxCounters();
 }
 
 function setFilter(type, value) {
   activeFilters[type] = value;
 
-  if (type === 'status') {
-    document.querySelectorAll('.status-filter-group .nav-item').forEach((el) => el.classList.remove('active'));
-    const statusId = activeFilters.status === '' ? 'filter-all' : `filter-${activeFilters.status.toLowerCase().replace('_', '-')}`;
+  if (type === "status") {
+    document
+      .querySelectorAll(".status-filter-group .nav-item")
+      .forEach((el) => el.classList.remove("active"));
+    const statusId =
+      activeFilters.status === ""
+        ? "filter-all"
+        : `filter-${activeFilters.status.toLowerCase().replace("_", "-")}`;
     const statusEl = document.getElementById(statusId);
-    if (statusEl) statusEl.classList.add('active');
+    if (statusEl) statusEl.classList.add("active");
   }
 
-  if (type === 'priority') {
-    document.querySelectorAll('.priority-filter-group .nav-item').forEach((el) => el.classList.remove('active'));
-    const priorityId = activeFilters.priority === '' ? 'filter-p-all' : `filter-${activeFilters.priority.toLowerCase()}`;
+  if (type === "priority") {
+    document
+      .querySelectorAll(".priority-filter-group .nav-item")
+      .forEach((el) => el.classList.remove("active"));
+    const priorityId =
+      activeFilters.priority === ""
+        ? "filter-p-all"
+        : `filter-${activeFilters.priority.toLowerCase()}`;
     const priorityEl = document.getElementById(priorityId);
-    if (priorityEl) priorityEl.classList.add('active');
+    if (priorityEl) priorityEl.classList.add("active");
   }
 
-  if (type === 'mailbox') {
-    document.querySelectorAll('.channels-filter-group .nav-item').forEach((el) => el.classList.remove('active'));
-    if (value === '') {
-      const allEl = document.getElementById('filter-mb-all');
-      if (allEl) allEl.classList.add('active');
+  if (type === "mailbox") {
+    document
+      .querySelectorAll(".channels-filter-group .nav-item")
+      .forEach((el) => el.classList.remove("active"));
+    if (value === "") {
+      const allEl = document.getElementById("filter-mb-all");
+      if (allEl) allEl.classList.add("active");
     } else {
       const found = mailboxChannels.find((m) => m.email === value);
       if (found) {
         const mbEl = document.getElementById(`filter-mb-${found.id}`);
-        if (mbEl) mbEl.classList.add('active');
+        if (mbEl) mbEl.classList.add("active");
       }
     }
   }
 
-  applyFiltersAndRender();
+  ticketPage = 1;
+  loadAllTickets();
 }
 
 function applyFiltersAndRender() {
-  displayedTickets = allTickets.filter((t) => {
-    if (activeFilters.status && t.status !== activeFilters.status) return false;
-    if (activeFilters.priority && t.priority !== activeFilters.priority) return false;
-    if (activeFilters.mailbox && t.recipientEmail !== activeFilters.mailbox && t.mailboxId !== activeFilters.mailbox) return false;
-    return true;
-  });
+  displayedTickets = allTickets;
   renderTicketList();
-
-  const appBody = document.querySelector('.app-body');
-  const isMobileViewOpen = appBody && appBody.classList.contains('ticket-view-open');
-  const isMobile = window.innerWidth < 768;
-
-  if (selectedTicketId) {
-    const stillInList = displayedTickets.some((t) => t.id === selectedTicketId);
-    if (!stillInList) {
-      clearTicketDetail();
-    } else if (isMobile && !isMobileViewOpen) {
-      // User is on mobile browsing the ticket list; keep list view and do not force open
-      selectedTicketId = null;
-      renderTicketList();
-    } else {
-      // Refresh ticket details in-place without forcing mobile full-screen switch
-      selectTicket(selectedTicketId, false, isMobileViewOpen);
-    }
-  }
 }
 
 function clearTicketDetail() {
@@ -243,65 +358,75 @@ function clearTicketDetail() {
     clearInterval(collisionPollerTimer);
     collisionPollerTimer = null;
   }
+  saveDraft();
   selectedTicketId = null;
   currentTicketOriginal = null;
   pendingChanges = {};
-  const content = document.getElementById('ticket-content');
-  if (content) content.style.display = 'none';
-  const emptyState = document.getElementById('empty-state');
-  if (emptyState) emptyState.style.display = 'flex';
-  const appBody = document.querySelector('.app-body');
-  if (appBody) appBody.classList.remove('ticket-view-open');
+  const content = document.getElementById("ticket-content");
+  if (content) content.style.display = "none";
+  const emptyState = document.getElementById("empty-state");
+  if (emptyState) emptyState.style.display = "flex";
+  const appBody = document.querySelector(".app-body");
+  if (appBody) appBody.classList.remove("ticket-view-open");
   renderTicketList();
 }
 
 function renderTicketList() {
-  const container = document.getElementById('ticket-items-container');
+  const container = document.getElementById("ticket-items-container");
   if (!container) return;
-  const sb = document.getElementById('search-bar');
-  const search = (sb ? sb.value : '').toLowerCase().trim();
-  const clearBtn = document.getElementById('search-clear-btn');
-  if (clearBtn) clearBtn.style.display = search.length > 0 ? 'flex' : 'none';
+  const search = ticketSearchQuery.trim();
+  const clearBtn = document.getElementById("search-clear-btn");
+  if (clearBtn) clearBtn.style.display = search.length > 0 ? "flex" : "none";
 
-  const filtered = displayedTickets.filter((t) => (
-    (t.subject || '').toLowerCase().includes(search) ||
-    (t.senderEmail || '').toLowerCase().includes(search) ||
-    (t.body || '').toLowerCase().includes(search)
-  ));
+  const filtered = displayedTickets;
 
-  container.innerHTML = '';
+  container.innerHTML = "";
   if (filtered.length === 0) {
-    container.innerHTML = '<div style="padding: 28px; text-align: center; color: var(--text-subtle); font-size: 13px;">No tickets match your filters</div>';
+    container.innerHTML =
+      '<div style="padding: 28px; text-align: center; color: var(--text-subtle); font-size: 13px;">No tickets match your filters</div>';
     return;
   }
 
   filtered.forEach((t) => {
-    const card = document.createElement('div');
-    card.className = `ticket-card ${selectedTicketId === t.id ? 'selected' : ''}`;
+    const card = document.createElement("div");
+    card.className = `ticket-card ${selectedTicketId === t.id ? "selected" : ""}`;
     card.onclick = () => selectTicket(t.id);
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        selectTicket(t.id);
+      }
+    };
 
     const dict = I18N[currentLang] || I18N.RU;
-    const statusClass = `badge-${(t.status || 'waiting').toLowerCase()}`;
-    const priorityClass = `badge-priority-${(t.priority || 'medium').toLowerCase()}`;
+    const statusClass = `badge-${(t.status || "waiting").toLowerCase()}`;
+    const priorityClass = `badge-priority-${(t.priority || "medium").toLowerCase()}`;
     const statusMap = {
-      WAITING: dict.status_waiting || 'В ожидании',
-      IN_PROGRESS: dict.status_in_progress || 'В работе',
-      RESOLVED: dict.status_resolved || 'Решена',
+      WAITING: dict.status_waiting || "В ожидании",
+      IN_PROGRESS: dict.status_in_progress || "В работе",
+      RESOLVED: dict.status_resolved || "Решена",
     };
     const priorityMap = {
-      LOW: dict.priority_low || 'Низкий',
-      MEDIUM: dict.priority_medium || 'Средний',
-      HIGH: dict.priority_high || 'Высокий',
-      CRITICAL: dict.priority_critical || 'Критический',
+      LOW: dict.priority_low || "Низкий",
+      MEDIUM: dict.priority_medium || "Средний",
+      HIGH: dict.priority_high || "Высокий",
+      CRITICAL: dict.priority_critical || "Критический",
     };
     const statusText = statusMap[t.status] || t.status;
     const priorityText = priorityMap[t.priority] || t.priority;
-    const assigneeName = t.assignee ? t.assignee.name : (dict.unassigned || '(Не назначен)');
-    const dateStr = new Date(t.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const assigneeName = t.assignee
+      ? t.assignee.name
+      : dict.unassigned || "(Не назначен)";
+    const dateStr = new Date(t.createdAt).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
     card.innerHTML = `
       <div class="card-meta-top">
-        <span>${escapeHtml(t.senderEmail)}</span>
+        <span class="card-sender-email" title="${escapeHtml(t.senderEmail)}">${escapeHtml(t.senderEmail)}</span>
         <span>${dateStr}</span>
       </div>
       <div class="card-title">${escapeHtml(t.subject)}</div>
@@ -309,7 +434,7 @@ function renderTicketList() {
       <div class="card-badges">
         <span class="badge ${statusClass}">${escapeHtml(statusText)}</span>
         <span class="badge ${priorityClass}">● ${escapeHtml(priorityText)}</span>
-        ${t.recipientEmail ? `<span class="badge badge-channel" title="Received on ${escapeHtml(t.recipientEmail)}">${escapeHtml(t.recipientEmail)}</span>` : ''}
+        ${t.recipientEmail ? `<span class="badge badge-channel" title="Received on ${escapeHtml(t.recipientEmail)}">${escapeHtml(t.recipientEmail)}</span>` : ""}
         <span style="margin-left: auto; font-size: 11px; color: var(--text-subtle);">${escapeHtml(assigneeName)}</span>
       </div>
     `;
@@ -318,102 +443,134 @@ function renderTicketList() {
 }
 
 function formatMessageBody(text) {
-  if (!text) return '';
+  if (!text) return "";
   const escaped = escapeHtml(text);
-  return escaped.replace(/(https?:\/\/(?:(?!&lt;|&gt;)[^\s<>'"])+)/gi, (match) => {
-    let clean = match;
-    let trailing = '';
-    const m = clean.match(/([.,;!?:)]+)$/);
-    if (m) {
-      trailing = m[1];
-      clean = clean.slice(0, -trailing.length);
-    }
-    const href = clean.replace(/&amp;/g, '&');
-    return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="msg-link">${clean}</a>${trailing}`;
-  });
+  return escaped.replace(
+    /(https?:\/\/(?:(?!&lt;|&gt;)[^\s<>'"])+)/gi,
+    (match) => {
+      let clean = match;
+      let trailing = "";
+      const m = clean.match(/([.,;!?:)]+)$/);
+      if (m) {
+        trailing = m[1];
+        clean = clean.slice(0, -trailing.length);
+      }
+      const href = clean.replace(/&amp;/g, "&");
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="msg-link">${clean}</a>${trailing}`;
+    },
+  );
 }
 
 async function selectTicket(id, scrollToBottom = false, openMobileView = true) {
+  const request = ++ticketDetailRequest;
+  if (selectedTicketId !== id) saveDraft();
   selectedTicketId = id;
-  selectedReplyFiles = [];
-  const fileInput = document.getElementById('reply-file-input');
-  if (fileInput) fileInput.value = '';
+  const draft = ticketDrafts.get(id);
+  selectedReplyFiles =
+    draft?.files ||
+    (currentTicketOriginal?.id === id ? selectedReplyFiles : []);
+  document.getElementById("reply-text").value =
+    draft?.text ||
+    (currentTicketOriginal?.id === id
+      ? document.getElementById("reply-text").value
+      : "");
+  const fileInput = document.getElementById("reply-file-input");
+  if (fileInput) fileInput.value = "";
   renderReplyFilesPreview();
   renderTicketList();
 
   // Mobile: Switch view to full-screen ticket detail only if explicitly requested
-  const appBody = document.querySelector('.app-body');
+  const appBody = document.querySelector(".app-body");
   if (openMobileView && appBody) {
-    appBody.classList.add('ticket-view-open');
+    appBody.classList.add("ticket-view-open");
   }
 
-  const emptyState = document.getElementById('empty-state');
-  if (emptyState) emptyState.style.display = 'none';
-  const content = document.getElementById('ticket-content');
-  if (content) content.style.display = 'flex';
+  const emptyState = document.getElementById("empty-state");
+  if (emptyState) emptyState.style.display = "none";
+  const content = document.getElementById("ticket-content");
+  if (content) content.style.display = "flex";
 
   try {
-    const res = await fetch(`/api/tickets/${id}`, { headers: getAuthHeaders() });
-    if (!res.ok) throw new Error('Ticket not found');
+    const res = await apiFetch(`/api/tickets/${id}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const message =
+        res.status === 404 ? t("ticket_not_found") : t("ticket_load_failed");
+      throw new Error(`${message} (HTTP ${res.status})`);
+    }
     const ticket = await res.json();
+    if (request !== ticketDetailRequest || selectedTicketId !== id) return;
+    showTicketError("");
 
-    const dSubject = document.getElementById('d-subject');
+    const dSubject = document.getElementById("d-subject");
     if (dSubject) dSubject.textContent = ticket.subject;
-    const breadcrumb = document.getElementById('d-breadcrumb-subject');
-    if (breadcrumb) breadcrumb.textContent = ticket.subject || 'Обращение';
+    const breadcrumb = document.getElementById("d-breadcrumb-subject");
+    if (breadcrumb) breadcrumb.textContent = ticket.subject || "Обращение";
 
-    const metaSender = document.getElementById('d-meta-sender');
-    if (metaSender) metaSender.textContent = ticket.senderEmail || '—';
+    const metaSender = document.getElementById("d-meta-sender");
+    if (metaSender) metaSender.textContent = ticket.senderEmail || "—";
 
-    const metaDate = document.getElementById('d-meta-date');
-    if (metaDate) metaDate.textContent = new Date(ticket.createdAt).toLocaleDateString();
+    const metaDate = document.getElementById("d-meta-date");
+    if (metaDate)
+      metaDate.textContent = new Date(ticket.createdAt).toLocaleDateString();
 
-    const channelBadge = document.getElementById('d-channel-badge');
+    const channelBadge = document.getElementById("d-channel-badge");
     if (channelBadge) {
       if (ticket.recipientEmail) {
-        channelBadge.style.display = 'inline-flex';
+        channelBadge.style.display = "inline-flex";
         channelBadge.textContent = `${ticket.recipientEmail}`;
         channelBadge.title = `Inbound mailbox: ${ticket.recipientEmail}`;
       } else {
-        channelBadge.style.display = 'none';
+        channelBadge.style.display = "none";
       }
     }
-    const dStatus = document.getElementById('d-status-select');
+    const dStatus = document.getElementById("d-status-select");
     if (dStatus) dStatus.value = ticket.status;
-    const dPriority = document.getElementById('d-priority-select');
+    const dPriority = document.getElementById("d-priority-select");
     if (dPriority) dPriority.value = ticket.priority;
-    const dAssignee = document.getElementById('d-assignee-select');
-    if (dAssignee) dAssignee.value = ticket.assigneeId || '';
+    const dAssignee = document.getElementById("d-assignee-select");
+    if (dAssignee) dAssignee.value = ticket.assigneeId || "";
 
     currentTicketOriginal = {
+      id: ticket.id,
+      version: ticket.version,
       status: ticket.status,
       priority: ticket.priority,
-      assigneeId: ticket.assigneeId || '',
+      assigneeId: ticket.assigneeId || "",
     };
-    pendingChanges = {};
+    if (draft?.original && Object.keys(draft.pending || {}).length)
+      currentTicketOriginal = draft.original;
+    pendingChanges = draft?.pending || {};
+    for (const [key, value] of Object.entries(pendingChanges)) {
+      const control = document.getElementById(
+        key === "assignee_id" ? "d-assignee-select" : "d-" + key + "-select",
+      );
+      if (control) control.value = value || "";
+    }
     updateSaveButtonState();
     updateAuthUI();
 
-    lastKnownReplyCount = (ticket.replies || []).length;
+    lastKnownReplyCount = ticket.replyCount ?? (ticket.replies || []).length;
     collisionDetected = false;
-    const colBanner = document.getElementById('d-collision-banner');
-    if (colBanner) colBanner.style.display = 'none';
+    const colBanner = document.getElementById("d-collision-banner");
+    if (colBanner) colBanner.style.display = "none";
 
     updateAssigneeBanner(ticket);
     startCollisionPoller(id);
 
-    const thread = document.getElementById('d-thread');
+    const thread = document.getElementById("d-thread");
     if (thread) {
-      thread.innerHTML = '';
+      thread.innerHTML = "";
 
-      const origMsg = document.createElement('div');
-      origMsg.className = 'msg-card msg-initial';
+      const origMsg = document.createElement("div");
+      origMsg.className = "msg-card msg-initial";
       origMsg.innerHTML = `
         <div class="msg-header">
           <div class="msg-author">
             <span class="msg-author-email">${escapeHtml(ticket.senderEmail)}</span>
             <span class="msg-badge msg-badge-cust">CUSTOMER</span>
-            ${ticket.recipientEmail ? `<span class="badge badge-channel">В ящик: ${escapeHtml(ticket.recipientEmail)}</span>` : ''}
+            ${ticket.recipientEmail ? `<span class="badge badge-channel">В ящик: ${escapeHtml(ticket.recipientEmail)}</span>` : ""}
           </div>
           <div class="msg-time">${new Date(ticket.createdAt).toLocaleString()}</div>
         </div>
@@ -422,23 +579,9 @@ async function selectTicket(id, scrollToBottom = false, openMobileView = true) {
       thread.appendChild(origMsg);
 
       const replies = ticket.replies || [];
-      replies.forEach((rep) => {
-        const repMsg = document.createElement('div');
-        const isEmp = rep.senderType === 'EMPLOYEE';
-        repMsg.className = `msg-card ${isEmp ? 'msg-employee' : ''}`;
-        const empName = rep.authorName || 'Support Agent';
-        repMsg.innerHTML = `
-          <div class="msg-header">
-            <div class="msg-author">
-              <span class="msg-author-email">${isEmp ? escapeHtml(empName) : escapeHtml(ticket.senderEmail)}</span>
-              <span class="msg-badge ${isEmp ? 'msg-badge-emp' : 'msg-badge-cust'}">${rep.senderType}</span>
-            </div>
-            <div class="msg-time">${new Date(rep.createdAt).toLocaleString()}</div>
-          </div>
-          <div class="msg-body">${formatMessageBody(rep.body)}</div>
-        `;
-        thread.appendChild(repMsg);
-      });
+      replies.forEach((rep) =>
+        thread.append(renderReplyCard(rep, id, ticket.senderEmail)),
+      );
 
       if (scrollToBottom && replies.length > 0) {
         thread.scrollTop = thread.scrollHeight;
@@ -448,28 +591,49 @@ async function selectTicket(id, scrollToBottom = false, openMobileView = true) {
     }
 
     loadTicketAttachments(id);
+    if ((ticket.replies || []).length < ticket.replyCount) {
+      const more = document.createElement("button");
+      more.className = "btn btn-secondary";
+      more.textContent = t("load_more_replies");
+      more.onclick = () => loadMoreReplies(id, ticket.replies.length, more);
+      thread.append(more);
+    }
 
-    const replyMbSelect = document.getElementById('reply-mailbox-select');
+    const replyMbSelect = document.getElementById("reply-mailbox-select");
     if (replyMbSelect) {
-      replyMbSelect.innerHTML = '';
-      if (!mailboxChannels || mailboxChannels.length === 0) {
-        replyMbSelect.innerHTML = '<option value="">Основной ящик (.env)</option>';
-      } else {
-        mailboxChannels.forEach((mb) => {
-          const opt = document.createElement('option');
-          opt.value = mb.id;
-          opt.textContent = `${mb.name} (${mb.email})`;
-          const isMatchingMb = ticket.mailboxId === mb.id ||
-            (ticket.recipientEmail && mb.email && ticket.recipientEmail.toLowerCase().trim() === mb.email.toLowerCase().trim());
-          if (isMatchingMb) {
-            opt.selected = true;
-          }
-          replyMbSelect.appendChild(opt);
-        });
+      replyMbSelect.replaceChildren();
+      const outgoingMailboxes = mailboxChannels.filter((mailbox) => mailbox.canSend);
+      for (const mailbox of outgoingMailboxes) {
+        const option = document.createElement("option");
+        option.value = mailbox.id;
+        option.textContent = mailbox.email;
+        replyMbSelect.append(option);
       }
+      replyMbSelect.disabled = outgoingMailboxes.length === 0;
+      if (outgoingMailboxes.length === 0) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = t("no_outgoing_mailbox");
+        replyMbSelect.append(option);
+      } else {
+        const preferredMailboxId = draft?.mailbox || ticket.mailboxId;
+        replyMbSelect.value = outgoingMailboxes.some(
+          (mailbox) => mailbox.id === preferredMailboxId,
+        )
+          ? preferredMailboxId
+          : outgoingMailboxes[0].id;
+      }
+      replyMbSelect.onchange = () => saveDraft();
     }
   } catch (e) {
-    console.error('Failed to load ticket details:', e);
+    if (request === ticketDetailRequest) {
+      if (currentTicketOriginal?.id !== id) {
+        currentTicketOriginal = draft?.original || null;
+        pendingChanges = draft?.pending || {};
+      }
+      clearTicketDetail();
+      showTicketError(e.message);
+    }
   }
 }
 
@@ -481,24 +645,24 @@ function returnToHome(e) {
   currentTicketOriginal = null;
   pendingChanges = {};
 
-  const emptyState = document.getElementById('empty-state');
-  if (emptyState) emptyState.style.display = 'flex';
+  const emptyState = document.getElementById("empty-state");
+  if (emptyState) emptyState.style.display = "flex";
 
-  const content = document.getElementById('ticket-content');
-  if (content) content.style.display = 'none';
+  const content = document.getElementById("ticket-content");
+  if (content) content.style.display = "none";
 
-  const appBody = document.querySelector('.app-body');
-  if (appBody) appBody.classList.remove('ticket-view-open');
+  const appBody = document.querySelector(".app-body");
+  if (appBody) appBody.classList.remove("ticket-view-open");
 
-  if (typeof closeMobileSidebar === 'function') {
+  if (typeof closeMobileSidebar === "function") {
     closeMobileSidebar();
   }
-  if (typeof closeModals === 'function') {
+  if (typeof closeModals === "function") {
     closeModals();
   }
 
-  const replyText = document.getElementById('reply-text');
-  if (replyText) replyText.value = '';
+  const replyText = document.getElementById("reply-text");
+  if (replyText) replyText.value = "";
   selectedReplyFiles = [];
   renderReplyFilesPreview();
 
@@ -511,9 +675,9 @@ function closeMobileTicketDetail() {
 
 function handleMetaFieldChange(field) {
   if (!currentTicketOriginal) return;
-  const statusVal = document.getElementById('d-status-select')?.value;
-  const priorityVal = document.getElementById('d-priority-select')?.value;
-  const assigneeVal = document.getElementById('d-assignee-select')?.value;
+  const statusVal = document.getElementById("d-status-select")?.value;
+  const priorityVal = document.getElementById("d-priority-select")?.value;
+  const assigneeVal = document.getElementById("d-assignee-select")?.value;
 
   pendingChanges = {};
   if (statusVal && statusVal !== currentTicketOriginal.status) {
@@ -522,7 +686,10 @@ function handleMetaFieldChange(field) {
   if (priorityVal && priorityVal !== currentTicketOriginal.priority) {
     pendingChanges.priority = priorityVal;
   }
-  if (assigneeVal !== undefined && assigneeVal !== currentTicketOriginal.assigneeId) {
+  if (
+    assigneeVal !== undefined &&
+    assigneeVal !== currentTicketOriginal.assigneeId
+  ) {
     pendingChanges.assignee = assigneeVal;
   }
 
@@ -530,146 +697,125 @@ function handleMetaFieldChange(field) {
 }
 
 function updateSaveButtonState() {
-  const btnSave = document.getElementById('btn-save-ticket');
+  const btnSave = document.getElementById("btn-save-ticket");
   if (!btnSave) return;
   const count = Object.keys(pendingChanges).length;
   const dict = I18N[currentLang] || I18N.RU;
-  const baseLabel = dict.btn_save || 'Сохранить';
+  const baseLabel = dict.btn_save || "Сохранить";
   if (count > 0) {
-    btnSave.classList.add('has-pending');
+    btnSave.classList.add("has-pending");
     btnSave.textContent = `${baseLabel} (${count})*`;
   } else {
-    btnSave.classList.remove('has-pending');
+    btnSave.classList.remove("has-pending");
     btnSave.textContent = baseLabel;
   }
 }
 
 async function saveTicketChanges() {
-  if (!selectedTicketId) return;
-  const dict = I18N[currentLang] || I18N.RU;
-  const count = Object.keys(pendingChanges).length;
-  if (count === 0) {
-    showToast(dict.no_pending_changes || 'Нет несохраненных изменений');
-    return;
-  }
-
-  const btnSave = document.getElementById('btn-save-ticket');
-  if (btnSave) {
-    btnSave.disabled = true;
-    btnSave.textContent = dict.saving || 'Сохранение...';
-  }
-
+  if (!selectedTicketId || !currentTicketOriginal) return;
+  const id = selectedTicketId,
+    changes = { ...pendingChanges };
+  let version = currentTicketOriginal.version;
+  const button = document.getElementById("btn-save-ticket");
+  if (button) button.disabled = true;
   try {
-    let savedOk = true;
-
-    if (pendingChanges.status !== undefined || pendingChanges.priority !== undefined) {
-      const payload = {};
-      if (pendingChanges.status !== undefined) payload.status = pendingChanges.status;
-      if (pendingChanges.priority !== undefined) payload.priority = pendingChanges.priority;
-      const res = await fetch(`/api/tickets/${selectedTicketId}`, {
-        method: 'PATCH',
+    const fields = {};
+    if (changes.status !== undefined) fields.status = changes.status;
+    if (changes.priority !== undefined) fields.priority = changes.priority;
+    if (changes.assignee !== undefined)
+      fields.assignee_id = changes.assignee || null;
+    if (Object.keys(fields).length) {
+      const res = await apiFetch("/api/tickets/" + id, {
+        method: "PATCH",
         headers: getAuthHeaders(true),
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...fields, version }),
       });
-      if (!res.ok) savedOk = false;
-    }
-
-    if (pendingChanges.assignee !== undefined) {
-      const res = await fetch(`/api/tickets/${selectedTicketId}/assign`, {
-        method: 'PATCH',
-        headers: getAuthHeaders(true),
-        body: JSON.stringify({ assignee_id: pendingChanges.assignee || null }),
-      });
-      if (!res.ok) savedOk = false;
-    }
-
-    if (savedOk) {
-      showToast(dict.changes_saved || 'Изменения успешно сохранены');
-      if (currentTicketOriginal) {
-        if (pendingChanges.status !== undefined) currentTicketOriginal.status = pendingChanges.status;
-        if (pendingChanges.priority !== undefined) currentTicketOriginal.priority = pendingChanges.priority;
-        if (pendingChanges.assignee !== undefined) currentTicketOriginal.assigneeId = pendingChanges.assignee;
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 409 && confirm(t("discard_conflicting_changes"))) {
+          const draft = ticketDrafts.get(id);
+          if (draft) draft.pending = {};
+          if (selectedTicketId === id) {
+            pendingChanges = {};
+            await selectTicket(id);
+          }
+        }
+        throw new Error(data.message);
       }
+      version = data.version;
+    }
+    if (selectedTicketId === id) {
       pendingChanges = {};
-
-      const found = allTickets.find((t) => t.id === selectedTicketId);
-      if (found) {
-        if (currentTicketOriginal.status) found.status = currentTicketOriginal.status;
-        if (currentTicketOriginal.priority) found.priority = currentTicketOriginal.priority;
-        found.assigneeId = currentTicketOriginal.assigneeId || null;
-        found.assignee = users.find((u) => u.id === found.assigneeId) || null;
-      }
-
-      updateCounters();
-      applyFiltersAndRender();
-
-      addNotification({
-        titleKey: 'notif_ticket_updated',
-        messageKey: 'notif_changes_saved_desc',
-        ticketId: selectedTicketId,
-        ticketNumber: selectedTicketId.slice(0, 8),
-        type: 'success',
-      });
-
-    } else {
-      alert('Failed to save some changes');
+      saveDraft();
+      await selectTicket(id);
     }
-  } catch (e) {
-    console.error('Error saving ticket changes:', e);
-    alert('Error saving changes: ' + e.message);
+    await loadAllTickets();
+    showToast(I18N[currentLang]?.changes_saved || "Saved");
+  } catch (error) {
+    showTicketError(error.message + " Refresh the ticket before retrying.");
   } finally {
-    if (btnSave) btnSave.disabled = false;
+    if (button) button.disabled = false;
     updateSaveButtonState();
   }
 }
 
 async function quickResolveTicket() {
-  const select = document.getElementById('d-status-select');
+  const select = document.getElementById("d-status-select");
   if (!select || !selectedTicketId) return;
-  select.value = 'RESOLVED';
-  handleMetaFieldChange('status');
+  select.value = "RESOLVED";
+  handleMetaFieldChange("status");
   await saveTicketChanges();
 }
 
 async function patchTicket(subpath, payload) {
   if (!selectedTicketId) return;
   try {
-    const res = await fetch(`/api/tickets/${selectedTicketId}${subpath}`, {
-      method: 'PATCH',
+    const res = await apiFetch(`/api/tickets/${selectedTicketId}${subpath}`, {
+      method: "PATCH",
       headers: getAuthHeaders(true),
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        version: currentTicketOriginal?.version,
+      }),
     });
     if (res.ok) {
-      showToast(I18N[currentLang]?.changes_saved || 'Изменения сохранены');
+      showToast(I18N[currentLang]?.changes_saved || "Изменения сохранены");
     }
     await loadAllTickets();
   } catch (e) {
-    console.error('Failed to patch ticket:', e);
+    console.error("Failed to patch ticket:", e);
   }
 }
 
-
-
 async function deleteCurrentTicket() {
   if (!selectedTicketId) return;
-  if (!confirm('Are you sure you want to permanently delete this ticket and all attachments?')) return;
+  if (
+    !confirm(
+      "Are you sure you want to permanently delete this ticket and all attachments?",
+    )
+  )
+    return;
   try {
-    const res = await fetch(`/api/tickets/${selectedTicketId}`, { method: 'DELETE', headers: getAuthHeaders() });
+    const res = await apiFetch(`/api/tickets/${selectedTicketId}`, {
+      method: "DELETE",
+      headers: getAuthHeaders(),
+    });
     if (res.ok || res.status === 404) {
       clearTicketDetail();
       await loadAllTickets();
     } else {
       const err = await res.json();
-      alert('Failed to delete ticket: ' + (err.message || 'Error'));
+      alert("Failed to delete ticket: " + (err.message || "Error"));
     }
   } catch {
-    alert('Failed to delete ticket');
+    alert("Failed to delete ticket");
   }
 }
 
 function handleReplyFilesSelected(fileList) {
   if (!fileList || fileList.length === 0) return;
-  for (let i = 0; i < fileList.length; i++) selectedReplyFiles.push(fileList[i]);
+  for (let i = 0; i < fileList.length; i++)
+    selectedReplyFiles.push(fileList[i]);
   renderReplyFilesPreview();
 }
 
@@ -679,22 +825,23 @@ function removeReplyFile(index) {
 }
 
 function renderReplyFilesPreview() {
-  const container = document.getElementById('reply-files-preview');
-  const countSpan = document.getElementById('reply-files-count');
+  const container = document.getElementById("reply-files-preview");
+  const countSpan = document.getElementById("reply-files-count");
   if (!container) return;
   if (selectedReplyFiles.length === 0) {
-    container.style.display = 'none';
-    container.innerHTML = '';
-    if (countSpan) countSpan.textContent = '';
+    container.style.display = "none";
+    container.innerHTML = "";
+    if (countSpan) countSpan.textContent = "";
     return;
   }
-  container.style.display = 'flex';
-  container.innerHTML = selectedReplyFiles.map((f, idx) => {
-    const sizeKb = (f.size / 1024).toFixed(1);
-    return `<span class="reply-file-chip">
+  container.style.display = "flex";
+  container.innerHTML = selectedReplyFiles
+    .map((f, idx) => {
+      const sizeKb = (f.size / 1024).toFixed(1);
+      return `<span class="reply-file-chip">
       <span style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(f.name)}</span>
       <span style="color: var(--text-muted); font-size: 11px;">(${sizeKb} KB)</span>
-      <button type="button" class="remove-file-btn" onclick="removeReplyFile(${idx})" title="Удалить файл" aria-label="Удалить файл">
+      <button type="button" class="remove-file-btn" data-ui-click="a106" data-ui-args="${escapeHtml(JSON.stringify([idx]))}" title="Удалить файл" aria-label="Удалить файл">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="3 6 5 6 21 6"></polyline>
           <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -703,195 +850,276 @@ function renderReplyFilesPreview() {
         </svg>
       </button>
     </span>`;
-  }).join('');
-  if (countSpan) countSpan.textContent = `(${selectedReplyFiles.length} attached)`;
+    })
+    .join("");
+  if (countSpan)
+    countSpan.textContent = `(${selectedReplyFiles.length} attached)`;
 }
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve((reader.result || '').split(',')[1] || '');
+    reader.onload = () => resolve((reader.result || "").split(",")[1] || "");
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 }
 
 async function submitReply() {
-  const dict = I18N[currentLang] || I18N.RU;
-
-  if (!authState.user || !authState.token) {
-    openLoginModal(dict.auth_required_reply || 'Войдите в аккаунт сотрудника, чтобы ответить на тикет');
-    return;
+  if (!authState.token || !selectedTicketId) return;
+  saveDraft();
+  const id = selectedTicketId,
+    draft = ticketDrafts.get(id),
+    text = draft.text.trim(),
+    files = [...draft.files];
+  if (!text) return;
+  if (
+    files.length > uploadLimits.maxAttachments ||
+    files.some((f) => f.size > uploadLimits.maxAttachmentBytes) ||
+    files.reduce((n, f) => n + f.size, 0) > uploadLimits.maxMessageBytes
+  )
+    return showTicketError("Attachment size or count limit exceeded");
+  const signature =
+    text +
+    "|" +
+    (document.getElementById("reply-mailbox-select")?.value || "") +
+    "|" +
+    files.map((f) => f.name + ":" + f.size + ":" + f.lastModified).join("|");
+  if (draft.signature !== signature) {
+    draft.key = crypto.randomUUID();
+    draft.signature = signature;
+    draft.uploadKeys = files.map(() => crypto.randomUUID());
   }
-
-  const text = document.getElementById('reply-text').value.trim();
-  if (!text || !selectedTicketId) return;
-
-  const btn = document.getElementById('btn-send-reply');
-  if (btn) { btn.disabled = true; btn.textContent = dict.saving || 'Отправка...'; }
-
-  if (collisionDetected) {
-    const confirmSend = confirm(dict.collision_confirm || 'Коллега уже ответил на эту заявку. Вы уверены, что хотите отправить еще один ответ клиенту?');
-    if (!confirmSend) {
-      if (btn) { btn.disabled = false; btn.textContent = dict.btn_send || 'Отправить ответ'; }
-      return;
-    }
-  }
-
+  const btn = document.getElementById("btn-send-reply");
+  btn.disabled = true;
   try {
-    const attachments = [];
-    for (const f of selectedReplyFiles) {
-      const base64 = await fileToBase64(f);
-      attachments.push({ original_name: f.name, mime_type: f.type || 'application/octet-stream', data: base64 });
+    const attachmentIds = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const res = await apiFetch("/api/tickets/" + id + "/uploads", {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+          "Content-Type": "application/octet-stream",
+          "X-Filename": encodeURIComponent(file.name),
+          "X-File-Type": file.type || "application/octet-stream",
+          "Idempotency-Key": draft.uploadKeys[i],
+        },
+        body: file,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      attachmentIds.push(data.id);
     }
-
-    const wasUnassigned = !currentTicketOriginal?.assigneeId;
-    const selectedMailboxId = document.getElementById('reply-mailbox-select')?.value || undefined;
-    const res = await fetch(`/api/tickets/${selectedTicketId}/replies`, {
-      method: 'POST',
-      headers: getAuthHeaders(true),
+    const res = await apiFetch("/api/tickets/" + id + "/replies", {
+      method: "POST",
+      headers: { ...getAuthHeaders(true), "Idempotency-Key": draft.key },
       body: JSON.stringify({
         body: text,
-        sender_type: 'EMPLOYEE',
-        author_name: authState.user?.name || undefined,
-        mailbox_id: selectedMailboxId,
-        attachments: attachments.length > 0 ? attachments : undefined,
+        sender_type: "EMPLOYEE",
+        mailbox_id:
+          document.getElementById("reply-mailbox-select")?.value || null,
+        attachment_ids: attachmentIds,
       }),
     });
-
-    if (res.ok) {
-      document.getElementById('reply-text').value = '';
+    const reply = await res.json();
+    if (!res.ok) throw new Error(reply.message);
+    ticketDrafts.delete(id);
+    if (selectedTicketId === id) {
+      document.getElementById("reply-text").value = "";
       selectedReplyFiles = [];
-      const fileInput = document.getElementById('reply-file-input');
-      if (fileInput) fileInput.value = '';
-      renderReplyFilesPreview();
-
-      collisionDetected = false;
-      const colBanner = document.getElementById('d-collision-banner');
-      if (colBanner) colBanner.style.display = 'none';
-
-      await selectTicket(selectedTicketId, true);
-      await loadAllTickets();
-
-      if (wasUnassigned && authState.user) {
-        showToast(dict.auto_assigned_toast || 'Заявка автоматически закреплена за вами');
-      } else {
-        showToast(dict.changes_saved || 'Ответ успешно отправлен');
-      }
-
-      addNotification({
-        titleKey: 'notif_reply_sent',
-        messageKey: 'notif_reply_dispatched_desc',
-        ticketId: selectedTicketId,
-        ticketNumber: selectedTicketId.slice(0, 8),
-        type: 'reply',
-      });
-
-    } else {
-      const err = await res.json();
-      alert('Failed to send reply: ' + (err.message || 'Error'));
+      await selectTicket(id, true);
     }
-  } catch (err) {
-    alert('Failed to send reply: ' + err.message);
+    await loadAllTickets();
+    showToast(
+      I18N[currentLang]?.reply_queued || "Reply saved and queued for delivery",
+    );
+    addNotification({
+      titleKey: "reply_queued",
+      message: text.slice(0, 100),
+      ticketId: id,
+      type: "reply",
+    });
+  } catch (error) {
+    showTicketError(error.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = dict.btn_send || 'Отправить ответ'; }
+    btn.disabled = false;
   }
 }
-
-async function downloadAttachmentFile(e, ticketId, attId, filename) {
-  if (e) {
-    e.preventDefault();
-    e.stopPropagation();
-  }
+async function downloadAttachmentFile(event, ticketId, attId, filename) {
+  event?.preventDefault();
+  event?.stopPropagation();
   try {
-    const tokenParam = (typeof authState !== 'undefined' && authState.token) ? `?token=${encodeURIComponent(authState.token)}` : '';
-    const res = await fetch(`/api/tickets/${ticketId}/attachments/${attId}/download${tokenParam}`, {
-      headers: typeof getAuthHeaders === 'function' ? getAuthHeaders() : {},
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(err.message || 'Failed to download attachment');
-      return;
-    }
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = filename || 'attachment';
-    document.body.appendChild(a);
+    const res = await apiFetch(
+      "/api/tickets/" + ticketId + "/attachments/" + attId + "/download",
+      { headers: getAuthHeaders() },
+    );
+    if (!res.ok) throw new Error((await res.json()).message);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
     a.click();
-    setTimeout(() => {
-      a.remove();
-      URL.revokeObjectURL(blobUrl);
-    }, 1000);
-  } catch (err) {
-    console.error('Download error:', err);
-    const tokenParam = (typeof authState !== 'undefined' && authState.token) ? `?token=${encodeURIComponent(authState.token)}` : '';
-    window.open(`/api/tickets/${ticketId}/attachments/${attId}/download${tokenParam}`, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    showTicketError(error.message);
   }
 }
-
 async function loadTicketAttachments(ticketId) {
-  const panel = document.getElementById('d-attachments'), list = document.getElementById('d-attachments-list'), countSpan = document.getElementById('d-attachments-count');
-  if (!panel || !list) return;
+  const panel = document.getElementById("d-attachments"),
+    list = document.getElementById("d-attachments-list");
   try {
-    const res = await fetch(`/api/tickets/${ticketId}/attachments`, { headers: getAuthHeaders() });
-    if (!res.ok) { panel.style.display = 'none'; return; }
-    const attachments = await res.json();
-    if (!attachments || attachments.length === 0) { panel.style.display = 'none'; list.innerHTML = ''; return; }
-
-    panel.style.display = 'flex';
-    if (countSpan) countSpan.textContent = `(${attachments.length})`;
-    list.innerHTML = '';
-
-    const dict = (typeof I18N !== 'undefined' && I18N[currentLang]) ? I18N[currentLang] : (window.I18N?.RU || {});
-    const downloadLabel = dict.btn_download || 'Скачать';
-    const clickToViewLabel = dict.click_to_view || 'Click to view';
-    const expiredLabel = dict.expired || 'Expired';
-
-    attachments.forEach((att) => {
-      const card = document.createElement('div');
-      const sizeStr = formatBytes(att.size || att.fileSize);
-      const isImg = (att.mimeType || '').startsWith('image/');
-      const token = (typeof authState !== 'undefined' && authState.token) ? authState.token : '';
-      const tokenParam = token ? `token=${encodeURIComponent(token)}` : '';
-      const dlUrl = `/api/tickets/${ticketId}/attachments/${att.id}/download${tokenParam ? '?' + tokenParam : ''}`;
-      const prevUrl = `/api/tickets/${ticketId}/attachments/${att.id}/download?inline=true${tokenParam ? '&' + tokenParam : ''}`;
-      const name = escapeHtml(att.originalName);
-      const safeRawName = (att.originalName || 'attachment').replace(/['"\\]/g, '');
-
-      if (att.isPurged) {
-        card.className = 'attachment-card';
-        card.innerHTML = `<span></span><span class="attachment-name" title="${name}">${name}</span><span class="attachment-size">(${sizeStr})</span><span class="attachment-purged-badge" title="Purged 24h after resolution">${escapeHtml(expiredLabel)}</span>`;
-      } else if (isImg) {
-        card.className = 'attachment-image-card';
-        card.onclick = () => openLightbox(prevUrl, att.originalName, dlUrl, ticketId, att.id);
-        card.innerHTML = `<img src="${prevUrl}" class="attachment-thumb" alt="${name}" loading="lazy" /><div class="attachment-image-info"><span class="attachment-name" title="${name}">${name}</span><span class="attachment-size">${sizeStr} • ${escapeHtml(clickToViewLabel)}</span></div><a href="${dlUrl}" target="_blank" download="${name}" class="attachment-download-btn" onclick="downloadAttachmentFile(event, '${ticketId}', '${att.id}', '${safeRawName}')" style="margin-left: auto;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>${escapeHtml(downloadLabel)}</a>`;
+    const response = await apiFetch(
+      "/api/tickets/" + ticketId + "/attachments",
+      { headers: getAuthHeaders() },
+    );
+    if (!response.ok) throw new Error("Unable to load attachments");
+    const attachments = await response.json();
+    if (selectedTicketId !== ticketId) return;
+    attachmentBlobUrls.forEach((url) => URL.revokeObjectURL(url));
+    attachmentBlobUrls = [];
+    list.replaceChildren();
+    panel.style.display = attachments.length ? "flex" : "none";
+    document.getElementById("d-attachments-count").textContent =
+      "(" + attachments.length + ")";
+    for (const attachment of attachments) {
+      const card = document.createElement("div");
+      card.className = "attachment-card";
+      const label = document.createElement("span");
+      label.className = "attachment-name";
+      label.textContent =
+        attachment.originalName + " (" + formatBytes(attachment.size) + ")";
+      card.append(label);
+      if (attachment.isPurged) {
+        const badge = document.createElement("span");
+        badge.textContent = I18N[currentLang]?.expired || "Expired";
+        card.append(badge);
       } else {
-        card.className = 'attachment-card';
-        card.innerHTML = `<span></span><span class="attachment-name" title="${name}">${name}</span><span class="attachment-size">(${sizeStr})</span><a href="${dlUrl}" target="_blank" download="${name}" class="attachment-download-btn" onclick="downloadAttachmentFile(event, '${ticketId}', '${att.id}', '${safeRawName}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>${escapeHtml(downloadLabel)}</a>`;
+        const button = document.createElement("button");
+        button.className = "btn btn-secondary";
+        button.textContent = I18N[currentLang]?.btn_download || "Download";
+        button.addEventListener("click", (event) =>
+          downloadAttachmentFile(
+            event,
+            ticketId,
+            attachment.id,
+            attachment.originalName,
+          ),
+        );
+        card.append(button);
+        if (
+          ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+            attachment.mimeType,
+          )
+        ) {
+          const preview = document.createElement("button");
+          preview.className = "btn btn-secondary";
+          preview.textContent = I18N[currentLang]?.preview || "Preview";
+          preview.addEventListener("click", async () => {
+            try {
+              const res = await apiFetch(
+                "/api/tickets/" +
+                  ticketId +
+                  "/attachments/" +
+                  attachment.id +
+                  "/download?inline=true",
+                { headers: getAuthHeaders() },
+              );
+              if (!res.ok) throw new Error("Preview unavailable");
+              const url = URL.createObjectURL(await res.blob());
+              if (selectedTicketId !== ticketId) {
+                URL.revokeObjectURL(url);
+                return;
+              }
+              attachmentBlobUrls.push(url);
+              openLightbox(
+                url,
+                attachment.originalName,
+                url,
+                ticketId,
+                attachment.id,
+              );
+            } catch (error) {
+              showTicketError(error.message);
+            }
+          });
+          card.append(preview);
+        }
       }
-      list.appendChild(card);
-    });
-  } catch (e) {
-    console.error('Failed to load attachments:', e);
-    panel.style.display = 'none';
+      list.append(card);
+    }
+  } catch (error) {
+    if (selectedTicketId === ticketId) showTicketError(error.message);
+  }
+}
+async function loadMoreReplies(id, offset, button) {
+  button.disabled = true;
+  try {
+    const response = await apiFetch(
+      "/api/tickets/" + id + "/replies?offset=" + offset + "&limit=50",
+      { headers: getAuthHeaders() },
+    );
+    if (!response.ok) throw new Error("Unable to load replies");
+    const replies = await response.json();
+    if (selectedTicketId !== id) return;
+    for (const reply of replies)
+      if (!document.querySelector('[data-reply-id="' + reply.id + '"]'))
+        button.before(renderReplyCard(reply, id, ""));
+    if (replies.length < 50) button.remove();
+    else {
+      button.onclick = () =>
+        loadMoreReplies(id, offset + replies.length, button);
+      button.disabled = false;
+    }
+  } catch (error) {
+    button.disabled = false;
+    showTicketError(error.message);
   }
 }
 
-const openNewTicketModal = () => document.getElementById('modal-new-ticket').classList.add('active');
+const openNewTicketModal = () => {
+  const modal = document.getElementById("modal-new-ticket");
+  let select = document.getElementById("nt-mailbox");
+  if (!select) {
+    const group = document.createElement("div");
+    group.className = "form-group";
+    const label = document.createElement("label");
+    label.htmlFor = "nt-mailbox";
+    label.textContent = t("outgoing_mailbox");
+    select = document.createElement("select");
+    select.id = "nt-mailbox";
+    select.className = "form-control";
+    group.append(label, select);
+    document.getElementById("nt-email").closest(".form-group").after(group);
+  }
+  select.replaceChildren();
+  for (const mailbox of mailboxChannels) {
+    const option = document.createElement("option");
+    option.value = mailbox.id;
+    option.textContent = mailbox.email;
+    select.append(option);
+  }
+  modal.classList.add("active");
+};
 
 async function submitNewTicket() {
-  const email = document.getElementById('nt-email').value.trim();
-  const subject = document.getElementById('nt-subject').value.trim();
-  const priority = document.getElementById('nt-priority').value;
-  const body = document.getElementById('nt-body').value.trim();
-  if (!email || !subject || !body) return alert('Please complete all required ticket fields');
+  const email = document.getElementById("nt-email").value.trim();
+  const subject = document.getElementById("nt-subject").value.trim();
+  const priority = document.getElementById("nt-priority").value;
+  const body = document.getElementById("nt-body").value.trim();
+  if (!email || !subject || !body)
+    return alert("Please complete all required ticket fields");
 
-  const res = await fetch('/api/tickets', {
-    method: 'POST',
+  const res = await apiFetch("/api/tickets", {
+    method: "POST",
     headers: getAuthHeaders(true),
-    body: JSON.stringify({ sender_email: email, subject, priority, body }),
+    body: JSON.stringify({
+      sender_email: email,
+      subject,
+      priority,
+      body,
+      mailbox_id: document.getElementById("nt-mailbox")?.value || undefined,
+    }),
   });
   if (res.ok) {
     const created = await res.json();
@@ -900,6 +1128,6 @@ async function submitNewTicket() {
     selectTicket(created.id);
   } else {
     const err = await res.json();
-    alert('Error: ' + (err.message || 'Failed to create ticket'));
+    alert("Error: " + (err.message || "Failed to create ticket"));
   }
 }

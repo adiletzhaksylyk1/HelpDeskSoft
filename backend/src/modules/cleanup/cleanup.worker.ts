@@ -1,127 +1,103 @@
-import { eq, and, lte, sql, inArray } from 'drizzle-orm';
-import type { AppDatabase } from '../../db/index.js';
-import { tickets, ticketAttachments, type TicketAttachment } from '../../db/schema.js';
-import type { StorageService } from '../storage/storage.service.js';
-import { getEnvConfig } from '../../config/env.js';
-import { logger } from '../../shared/logger.js';
-
+import { eq, and, lte, isNull, like } from "drizzle-orm";
+import type { AppDatabase } from "../../db/index.js";
+import { tickets, ticketAttachments } from "../../db/schema.js";
+import type { StorageService } from "../storage/storage.service.js";
+import { getEnvConfig } from "../../config/env.js";
+import { withDbLock } from "../../db/lock.js";
+import { logger } from "../../shared/logger.js";
 export interface PurgeResult {
   purgedCount: number;
   bytesFreed: number;
 }
-
 export class CleanupWorker {
   private timer: NodeJS.Timeout | null = null;
-  private isRunning = false;
-
+  private running: Promise<PurgeResult> | null = null;
   constructor(
-    private readonly db: AppDatabase,
-    private readonly storageService: StorageService,
-    private readonly retentionHoursOverride?: number
-  ) { }
-
+    private db: AppDatabase,
+    private storage: StorageService,
+    private retentionHoursOverride?: number,
+  ) {}
   async purgeExpiredAttachments(): Promise<PurgeResult> {
-    if (this.isRunning) {
-      logger.debug('Cleanup execution already in progress, skipping run');
-      return { purgedCount: 0, bytesFreed: 0 };
-    }
-
-    this.isRunning = true;
-    const env = getEnvConfig();
-    const retentionHours = this.retentionHoursOverride ?? env.ATTACHMENT_RETENTION_HOURS ?? 24;
-    const cutoffDate = new Date(Date.now() - retentionHours * 60 * 60 * 1000);
-
-    let purgedCount = 0;
-    let bytesFreed = 0;
-
-    try {
-      // Find attachments for tickets resolved before cutoffDate that have not yet been purged
-      const expiredItems = await this.db
-        .select({
-          attachment: ticketAttachments,
-          ticketStatus: tickets.status,
-          ticketResolvedAt: tickets.updatedAt,
-        })
+    if (this.running) return this.running;
+    this.running = this.run().finally(() => {
+      this.running = null;
+    });
+    return this.running;
+  }
+  private async run(): Promise<PurgeResult> {
+    const cutoff = new Date(
+      Date.now() -
+        (this.retentionHoursOverride ??
+          getEnvConfig().ATTACHMENT_RETENTION_HOURS) *
+          3600000,
+    );
+    const result = await withDbLock(this.db, 740010, async (tx) => {
+      const expired = await tx
+        .select({ attachment: ticketAttachments })
         .from(ticketAttachments)
         .innerJoin(tickets, eq(ticketAttachments.ticketId, tickets.id))
         .where(
           and(
-            eq(tickets.status, 'RESOLVED'),
-            lte(tickets.updatedAt, cutoffDate),
-            eq(ticketAttachments.isPurged, false)
-          )
+            eq(tickets.status, "RESOLVED"),
+            lte(tickets.resolvedAt, cutoff),
+            eq(ticketAttachments.isPurged, false),
+          ),
+        )
+        .limit(100);
+      const uploads = await tx
+        .select()
+        .from(ticketAttachments)
+        .where(
+          and(
+            isNull(ticketAttachments.replyId),
+            like(ticketAttachments.ingestKey, "upload:%"),
+            lte(ticketAttachments.createdAt, new Date(Date.now() - 86400000)),
+            eq(ticketAttachments.isPurged, false),
+          ),
+        )
+        .limit(100);
+      let purgedCount = 0,
+        bytesFreed = 0;
+      for (const attachment of [
+        ...expired.map((r) => r.attachment),
+        ...uploads,
+      ]) {
+        const result = await this.storage.deletePhysicalFile(
+          attachment.storagePath,
         );
-
-      if (expiredItems.length === 0) {
-        logger.debug({ cutoffDate, retentionHours }, 'No expired attachments eligible for purge');
-        return { purgedCount: 0, bytesFreed: 0 };
-      }
-
-      logger.info(
-        { count: expiredItems.length, retentionHours, cutoffDate },
-        'Found expired attachments for resolved tickets. Initiating storage purge'
-      );
-
-      for (const { attachment } of expiredItems) {
-        // 1. Delete physical file from storage (disk D: or university storage)
-        await this.storageService.deletePhysicalFile(attachment.storagePath);
-
-        // 2. Mark attachment as purged in database to preserve audit logs
-        await this.db
+        if (result !== "deleted" && result !== "missing") {
+          logger.error(
+            { attachmentId: attachment.id },
+            "Attachment deletion failed; will retry",
+          );
+          continue;
+        }
+        await tx
           .update(ticketAttachments)
-          .set({
-            isPurged: true,
-            purgedAt: new Date(),
-          })
+          .set({ isPurged: true, purgedAt: new Date() })
           .where(eq(ticketAttachments.id, attachment.id));
-
         purgedCount++;
-        bytesFreed += attachment.size || 0;
-
-        logger.info(
-          { attachmentId: attachment.id, filename: attachment.filename, ticketId: attachment.ticketId },
-          `Physical file purged per ${retentionHours}h retention policy`
-        );
+        if (result === "deleted") bytesFreed += attachment.size;
       }
-
-      logger.info({ purgedCount, bytesFreed }, 'Retention cleanup completed successfully');
-    } catch (err) {
-      logger.error({ err }, 'Error executing retention cleanup worker');
-    } finally {
-      this.isRunning = false;
-    }
-
-    return { purgedCount, bytesFreed };
+      return { purgedCount, bytesFreed };
+    });
+    await this.storage.reconcileOrphans();
+    return result;
   }
-
   start(): void {
-    const env = getEnvConfig();
-    const intervalMs = env.CLEANUP_CHECK_INTERVAL_MS || 3600000;
-    const retentionHours = this.retentionHoursOverride ?? env.ATTACHMENT_RETENTION_HOURS ?? 168;
-
-    logger.info(
-      { intervalMs, retentionHours },
-      `Starting automated retention cleanup worker (${retentionHours}h retention)`
+    void this.purgeExpiredAttachments().catch((err) =>
+      logger.error({ err }, "Cleanup failed"),
     );
-
-    // Initial check on boot
-    this.purgeExpiredAttachments().catch((err) =>
-      logger.error({ err }, 'Initial retention cleanup run failed')
+    this.timer = setInterval(
+      () =>
+        void this.purgeExpiredAttachments().catch((err) =>
+          logger.error({ err }, "Cleanup failed"),
+        ),
+      getEnvConfig().CLEANUP_CHECK_INTERVAL_MS,
     );
-
-    // Periodic schedule
-    this.timer = setInterval(() => {
-      this.purgeExpiredAttachments().catch((err) =>
-        logger.error({ err }, 'Periodic retention cleanup run failed')
-      );
-    }, intervalMs);
   }
-
-  stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-      logger.info('Automated retention cleanup worker stopped');
-    }
+  async stop(): Promise<void> {
+    if (this.timer) clearInterval(this.timer);
+    await this.running;
   }
 }

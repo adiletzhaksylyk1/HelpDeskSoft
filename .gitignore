@@ -7,3 +7,8 @@ coverage/
 *.log
 .DS_Store
 scratch/
+.npm-cache/
+test-results/
+playwright-report/
+/storage/
+/backups/

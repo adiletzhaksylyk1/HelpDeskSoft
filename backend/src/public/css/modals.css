@@ -23,7 +23,9 @@
   font-size: 13.5px;
   outline: none;
   font-family: inherit;
-  transition: border 0.15s, box-shadow 0.15s;
+  transition:
+    border 0.15s,
+    box-shadow 0.15s;
 }
 
 .form-input:focus,
@@ -59,14 +61,14 @@ select.input-select:focus {
 body.dark-theme .form-input,
 body.dark-theme .form-select,
 body.dark-theme select.input-select {
-  background: #18191D;
-  border-color: #383A42;
-  color: #F4F4F6;
+  background: #18191d;
+  border-color: #383a42;
+  color: #f4f4f6;
 }
 
 body.dark-theme select.input-select option {
   background: #222328;
-  color: #F4F4F6;
+  color: #f4f4f6;
 }
 
 /* Modals (MYDU Style - 16px radius, soft shadow) */
@@ -82,11 +84,13 @@ body.dark-theme select.input-select option {
   z-index: 1000;
   padding: 20px;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   transition: opacity 0.2s ease;
 }
 
 .modal-overlay.active {
+  visibility: visible;
   opacity: 1;
   pointer-events: auto;
 }
@@ -98,7 +102,9 @@ body.dark-theme select.input-select option {
   padding: 24px 28px;
   width: 100%;
   max-width: 480px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -113,8 +119,8 @@ body.dark-theme select.input-select option {
 
 body.dark-theme .modal-card {
   background: #222328;
-  border-color: #2F3138;
-  color: #F4F4F6;
+  border-color: #2f3138;
+  color: #f4f4f6;
 }
 
 .modal-title {
@@ -144,7 +150,7 @@ body.dark-theme .modal-card {
 }
 
 .toast {
-  background: #FFFFFF;
+  background: #ffffff;
   border: 1px solid var(--surface-border);
   border-radius: 10px;
   box-shadow: 0 10px 25px rgba(0, 21, 30, 0.12);
@@ -160,9 +166,9 @@ body.dark-theme .modal-card {
 }
 
 body.dark-theme .toast {
-  background: #161B22;
-  border-color: #30363D;
-  color: #F0F6FC;
+  background: #161b22;
+  border-color: #30363d;
+  color: #f0f6fc;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 
@@ -356,7 +362,9 @@ body.dark-theme .toast {
   gap: 8px;
   cursor: pointer;
   user-select: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 
 .role-multiselect-trigger:focus,
@@ -390,7 +398,7 @@ body.dark-theme .toast {
   font-size: 11px;
   font-weight: 700;
   background: var(--primary);
-  color: #FFFFFF;
+  color: #ffffff;
   border-radius: 12px;
   padding: 1px 7px;
   line-height: 1.4;
@@ -428,7 +436,9 @@ body.dark-theme .toast {
   border-radius: 50%;
   cursor: pointer;
   opacity: 0.65;
-  transition: opacity 0.15s, background 0.15s;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
   font-size: 12px;
   line-height: 1;
 }
@@ -448,7 +458,9 @@ body.dark-theme .toast {
   background: var(--surface);
   border: 1px solid var(--surface-border);
   border-radius: 10px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.15),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
   max-height: 240px;
   overflow-y: auto;
   padding: 6px;
@@ -512,7 +524,7 @@ body.dark-theme .toast {
 
 body.dark-theme .role-chip {
   background: rgba(0, 102, 255, 0.18);
-  color: #38BDF8;
+  color: #38bdf8;
   border-color: rgba(56, 189, 248, 0.3);
 }
 
@@ -607,7 +619,9 @@ body.dark-theme .role-multiselect-popover {
   background: var(--surface);
   border: 1px solid var(--surface-border);
   border-radius: 9px;
-  box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.18), 0 6px 10px -4px rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 10px 25px -4px rgba(0, 0, 0, 0.18),
+    0 6px 10px -4px rgba(0, 0, 0, 0.1);
   padding: 6px;
   max-height: 260px;
   overflow-y: auto;
@@ -650,7 +664,7 @@ body.dark-theme .role-multiselect-popover {
 
 body.dark-theme .tbl-role-badge {
   background: rgba(0, 102, 255, 0.18);
-  color: #38BDF8;
+  color: #38bdf8;
   border-color: rgba(56, 189, 248, 0.3);
 }
 
@@ -663,10 +677,11 @@ body.dark-theme .tbl-multiselect-popover {
 .tbl-multiselect-wrap.dropup .tbl-multiselect-popover {
   top: auto;
   bottom: calc(100% + 4px);
-  box-shadow: 0 -10px 25px -4px rgba(0, 0, 0, 0.18), 0 -6px 10px -4px rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 -10px 25px -4px rgba(0, 0, 0, 0.18),
+    0 -6px 10px -4px rgba(0, 0, 0, 0.1);
 }
 
 body.dark-theme .tbl-multiselect-wrap.dropup .tbl-multiselect-popover {
   box-shadow: 0 -12px 28px rgba(0, 0, 0, 0.6);
 }
-

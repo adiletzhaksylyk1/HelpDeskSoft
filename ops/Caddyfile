@@ -1,0 +1,6 @@
+{$HELPDESK_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy backend:3000 {
+    header_up X-Forwarded-For {remote_host}
+  }
+}

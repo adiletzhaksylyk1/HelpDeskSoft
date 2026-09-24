@@ -1,309 +1,283 @@
-import { FastifyInstance, FastifyPluginOptions } from 'fastify';
-import { z } from 'zod';
-import type { TicketsService } from './tickets.service.js';
-import { TICKET_STATUSES, TICKET_PRIORITIES, SENDER_TYPES } from '../../db/schema.js';
-
-const listQuerySchema = z.object({
+import fs from "node:fs";
+import crypto from "node:crypto";
+import { Readable } from "node:stream";
+import type { FastifyInstance, FastifyPluginOptions } from "fastify";
+import { z } from "zod";
+import type { TicketsService } from "./tickets.service.js";
+import type { StorageService } from "../storage/storage.service.js";
+import { TICKET_STATUSES, TICKET_PRIORITIES } from "../../db/schema.js";
+import {
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from "../../shared/errors.js";
+import { principal } from "../auth/guard.js";
+import { getEnvConfig } from "../../config/env.js";
+const listSchema = z.object({
   status: z.enum(TICKET_STATUSES).optional(),
   priority: z.enum(TICKET_PRIORITIES).optional(),
-  assignee: z.string().optional(),
-  mailbox_id: z.string().optional(),
-  recipient_email: z.string().optional(),
-  my_tickets: z.preprocess((val) => val === 'true' || val === true, z.boolean()).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  assignee: z.union([z.string().uuid(), z.literal("unassigned")]).optional(),
+  mailbox_id: z.string().uuid().optional(),
+  recipient_email: z.string().email().optional(),
+  search: z.string().trim().max(200).optional(),
+  my_tickets: z.enum(["true", "false"]).optional(),
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
 });
-
-const patchTicketSchema = z.object({
-  status: z.enum(TICKET_STATUSES).optional(),
-  priority: z.enum(TICKET_PRIORITIES).optional(),
-});
-
-const patchAssignSchema = z.object({
-  assignee_id: z.string().uuid().nullable().optional(),
-});
-
-const postReplyAttachmentSchema = z.object({
-  original_name: z.string().min(1),
-  mime_type: z.string().optional(),
-  data: z.string().min(1),
-});
-
-const postReplySchema = z.object({
-  body: z.string().min(1, 'Reply body cannot be empty'),
-  sender_type: z.enum(SENDER_TYPES),
-  mailbox_id: z.string().uuid().optional().nullable(),
-  author_name: z.string().optional(),
-  attachments: z.array(postReplyAttachmentSchema).max(20, 'Too many attachments').optional(),
-});
-
-const createTicketSchema = z.object({
+const createSchema = z.object({
   sender_email: z.string().email(),
-  recipient_email: z.string().optional(),
-  mailbox_id: z.string().optional(),
-  subject: z.string().min(1),
-  body: z.string().min(1),
-  message_id: z.string().optional(),
+  subject: z.string().trim().min(1).max(500),
+  body: z.string().trim().min(1).max(100000),
+  recipient_email: z.string().email().optional(),
+  mailbox_id: z.string().uuid().optional(),
   priority: z.enum(TICKET_PRIORITIES).optional(),
   assignee_id: z.string().uuid().optional(),
 });
-
-import fs from 'node:fs';
-import type { StorageService } from '../storage/storage.service.js';
-import { NotFoundError, UnauthorizedError, ForbiddenError } from '../../shared/errors.js';
-import { getEnvConfig } from '../../config/env.js';
-import { logger } from '../../shared/logger.js';
-
+const replySchema = z.object({
+  body: z.string().trim().min(1).max(100000),
+  sender_type: z.literal("EMPLOYEE").default("EMPLOYEE"),
+  mailbox_id: z.string().uuid().nullable().optional(),
+  attachment_ids: z.array(z.string().uuid()).max(20).optional(),
+  attachments: z
+    .array(
+      z.object({
+        original_name: z.string().min(1).max(255),
+        mime_type: z.string().max(200).optional(),
+        data: z
+          .string()
+          .regex(
+            /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
+          ),
+      }),
+    )
+    .max(20)
+    .optional(),
+});
 export function registerTicketRoutes(
   app: FastifyInstance,
-  ticketsService: TicketsService,
-  storageService: StorageService | undefined,
+  service: TicketsService,
+  storage: StorageService | undefined,
   _opts: FastifyPluginOptions,
-  done: (err?: Error) => void
+  done: (err?: Error) => void,
 ): void {
-  // GET /api/tickets - Requires authenticated staff session
-  app.get('/', async (req, reply) => {
-    try {
-      await req.jwtVerify();
-    } catch {
-      throw new UnauthorizedError('Authentication token required to view tickets');
-    }
-
-    const query = listQuerySchema.parse(req.query);
-    let effectiveAssignee: string | null | undefined = undefined;
-
-    if (query.assignee) {
-      effectiveAssignee = query.assignee === 'unassigned' ? null : query.assignee;
-    }
-
-    if (query.my_tickets) {
-      const payload = req.user as { id: string };
-      effectiveAssignee = payload.id;
-    }
-
-    const result = await ticketsService.listTickets(
-      {
-        status: query.status,
-        priority: query.priority,
-        assigneeId: effectiveAssignee,
-        mailboxId: query.mailbox_id,
-        recipientEmail: query.recipient_email,
+  const filters = (req: any) => {
+    const q = listSchema.parse(req.query);
+    return {
+      q,
+      f: {
+        status: q.status,
+        priority: q.priority,
+        search: q.search,
+        assigneeId:
+          q.my_tickets === "true"
+            ? principal(req).id
+            : q.assignee === "unassigned"
+              ? null
+              : q.assignee,
+        mailboxId: q.mailbox_id,
+        recipientEmail: q.recipient_email,
       },
-      {
-        page: query.page,
-        limit: query.limit,
-      }
+    };
+  };
+  app.get("/", async (req) => {
+    const { q, f } = filters(req);
+    return service.listTickets(f, { page: q.page, limit: q.limit });
+  });
+  app.get("/stats", async (req) => service.stats(filters(req).f));
+  app.get("/limits", async () => ({
+    maxAttachmentBytes: getEnvConfig().MAX_ATTACHMENT_BYTES,
+    maxMessageBytes: getEnvConfig().MAX_MESSAGE_BYTES,
+    maxAttachments: 20,
+  }));
+  app.post("/", async (req, reply) => {
+    const b = createSchema.parse(req.body);
+    return reply
+      .code(201)
+      .send(
+        await service.createTicket({
+          senderEmail: b.sender_email,
+          subject: b.subject,
+          body: b.body,
+          recipientEmail: b.recipient_email,
+          mailboxId: b.mailbox_id,
+          priority: b.priority,
+          assigneeId: b.assignee_id,
+        }),
+      );
+  });
+  app.get("/:id", async (req) =>
+    service.getTicketById((req.params as { id: string }).id),
+  );
+  app.patch("/:id", async (req) => {
+    const b = z
+      .object({
+        status: z.enum(TICKET_STATUSES).optional(),
+        priority: z.enum(TICKET_PRIORITIES).optional(),
+        assignee_id: z.string().uuid().nullable().optional(),
+        version: z.number().int().positive(),
+      })
+      .parse(req.body);
+    const { assignee_id, ...rest } = b;
+    return service.updateTicket((req.params as { id: string }).id, {
+      ...rest,
+      ...(assignee_id !== undefined ? { assigneeId: assignee_id } : {}),
+    });
+  });
+  app.patch("/:id/assign", async (req) => {
+    const b = z
+      .object({
+        assignee_id: z.string().uuid().nullable().optional(),
+        version: z.number().int().positive(),
+      })
+      .parse(req.body);
+    return service.assignTicket(
+      (req.params as { id: string }).id,
+      b.assignee_id,
+      b.version,
     );
-    return reply.status(200).send(result);
   });
-
-  // POST /api/tickets - Public/Ingestion ticket creation
-  app.post('/', async (req, reply) => {
-    const body = createTicketSchema.parse(req.body);
-    const created = await ticketsService.createTicket({
-      senderEmail: body.sender_email,
-      recipientEmail: body.recipient_email,
-      mailboxId: body.mailbox_id,
-      subject: body.subject,
-      body: body.body,
-      messageId: body.message_id,
-      priority: body.priority,
-      assigneeId: body.assignee_id,
+  app.get("/:id/replies", async (req) => {
+    const q = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+        offset: z.coerce.number().int().min(0).default(0),
+      })
+      .parse(req.query);
+    return service.getReplies(
+      (req.params as { id: string }).id,
+      q.limit,
+      q.offset,
+    );
+  });
+  app.post("/:id/replies/:replyId/retry", async (req) => {
+    const params = z
+      .object({ id: z.string().uuid(), replyId: z.string().uuid() })
+      .parse(req.params);
+    const body = z
+      .object({ confirmPossibleDuplicate: z.boolean().default(false) })
+      .parse(req.body);
+    return service.retryReply(
+      params.id,
+      params.replyId,
+      body.confirmPossibleDuplicate,
+    );
+  });
+  app.post("/:id/replies", async (req, reply) => {
+    const id = (req.params as { id: string }).id,
+      b = replySchema.parse(req.body),
+      user = principal(req);
+    const key = z.string().uuid().parse(req.headers["idempotency-key"]);
+    const ticket = await service.getTicketById(id);
+    const replyMailboxId =
+      b.mailbox_id === undefined ? ticket.mailboxId : b.mailbox_id;
+    await service.validateReplyMailbox(replyMailboxId);
+    if ((b.attachment_ids?.length || 0) + (b.attachments?.length || 0) > 20)
+      throw new ValidationError("Too many attachments");
+    return reply
+      .code(201)
+      .send(
+        await service.addReply(id, {
+          body: b.body,
+          senderType: "EMPLOYEE",
+          authorId: user.id,
+          authorName: user.name,
+          mailboxId: replyMailboxId || undefined,
+          idempotencyKey: key,
+          attachmentIds: b.attachment_ids,
+          attachments: b.attachments?.map((a) => ({
+            originalName: a.original_name,
+            mimeType: a.mime_type,
+            content: Buffer.from(a.data, "base64"),
+          })),
+        }),
+      );
+  });
+  app.addContentTypeParser("application/octet-stream", (req, payload, done) =>
+    done(null, payload),
+  );
+  app.post("/:id/uploads", async (req, reply) => {
+    if (!storage) throw new NotFoundError("Storage unavailable");
+    const id = (req.params as { id: string }).id;
+    await service.getTicketById(id);
+    const filename = z
+      .string()
+      .min(1)
+      .max(255)
+      .parse(decodeURIComponent(String(req.headers["x-filename"] || "")));
+    const type = z
+      .string()
+      .max(200)
+      .parse(req.headers["x-file-type"] || "application/octet-stream");
+    const user = principal(req),
+      key = z.string().uuid().parse(req.headers["idempotency-key"]);
+    if (!(req.body instanceof Readable))
+      throw new ValidationError("Send an application/octet-stream body");
+    const record = await storage.saveStream({
+      ticketId: id,
+      originalName: filename,
+      mimeType: type,
+      stream: req.body,
+      ingestKey: "upload:" + user.id + ":" + id + ":" + key,
     });
-    return reply.status(201).send(created);
+    const { storagePath, ...safe } = record;
+    return reply.code(201).send(safe);
   });
-
-  // GET /api/tickets/:id - Staff only
-  app.get('/:id', async (req, reply) => {
+  app.get("/:id/attachments", async (req) => {
+    const list =
+      (await storage?.findByTicketId((req.params as { id: string }).id)) || [];
+    return list
+      .filter((a) => !a.ingestKey?.startsWith("upload:") || a.replyId)
+      .map(({ storagePath, ingestKey, ...safe }) => safe);
+  });
+  app.get("/:id/attachments/:attachmentId/download", async (req, reply) => {
+    if (!storage) throw new NotFoundError("Storage unavailable");
+    const { id, attachmentId } = req.params as {
+      id: string;
+      attachmentId: string;
+    };
+    const a = await storage.findById(attachmentId);
+    if (!a || a.ticketId !== id)
+      throw new NotFoundError("Attachment not found");
+    if (a.isPurged)
+      return reply
+        .code(410)
+        .send({
+          error: "GONE",
+          message: "Attachment expired under the retention policy",
+        });
+    const file = await storage.checkedPath(a.storagePath);
     try {
-      await req.jwtVerify();
+      await fs.promises.access(file);
     } catch {
-      throw new UnauthorizedError('Authentication required to view ticket details');
+      return reply
+        .code(410)
+        .send({ error: "GONE", message: "Attachment unavailable" });
     }
-    const { id } = req.params as { id: string };
-    const ticket = await ticketsService.getTicketById(id);
-    return reply.status(200).send(ticket);
+    const inline =
+      (req.query as { inline?: string }).inline === "true" &&
+      ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+        a.mimeType.toLowerCase(),
+      );
+    reply.header("Content-Security-Policy", "default-src 'none'; sandbox");
+    reply.header(
+      "Content-Disposition",
+      (inline ? "inline" : "attachment") +
+        '; filename="' +
+        encodeURIComponent(a.originalName) +
+        '"',
+    );
+    return reply
+      .type(inline ? a.mimeType : "application/octet-stream")
+      .send(fs.createReadStream(file));
   });
-
-  // PATCH /api/tickets/:id - Update ticket status/priority (Staff only)
-  app.patch('/:id', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    try {
-      await req.jwtVerify();
-    } catch {
-      throw new UnauthorizedError('Authentication required to update ticket');
-    }
-
-    const body = patchTicketSchema.parse(req.body);
-    const updated = await ticketsService.updateTicket(id, body);
-    return reply.status(200).send(updated);
+  app.delete("/:id", async (req) => {
+    if (!principal(req).isAdmin)
+      throw new ForbiddenError("Administrator access required");
+    const id = (req.params as { id: string }).id;
+    await service.getTicketById(id);
+    await service.deleteTicket(id);
+    await storage?.deleteTicketStorage(id);
+    return { success: true };
   });
-
-  // PATCH /api/tickets/:id/assign - Assign ticket (Staff only)
-  app.patch('/:id/assign', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    try {
-      await req.jwtVerify();
-    } catch {
-      throw new UnauthorizedError('Authentication required to assign ticket');
-    }
-
-    const payload = req.user as { id: string; email: string };
-    const body = patchAssignSchema.parse(req.body);
-    const updated = await ticketsService.assignTicket(id, body.assignee_id);
-    logger.info({ ticketId: id, assigneeId: body.assignee_id, by: payload.email }, 'Ticket assignee changed');
-    return reply.status(200).send(updated);
-  });
-
-  // GET /api/tickets/:id/replies - Staff only
-  app.get('/:id/replies', async (req, reply) => {
-    try {
-      await req.jwtVerify();
-    } catch {
-      throw new UnauthorizedError('Authentication required to view ticket replies');
-    }
-    const { id } = req.params as { id: string };
-    const replies = await ticketsService.getReplies(id);
-    return reply.status(200).send(replies);
-  });
-
-  // POST /api/tickets/:id/replies - Replies (Staff requires auth, Customer replies do not)
-  app.post('/:id/replies', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const body = postReplySchema.parse(req.body);
-
-    let authorId: string | undefined = undefined;
-    let authorName: string | undefined = body.author_name;
-    if (body.sender_type === 'EMPLOYEE') {
-      try {
-        await req.jwtVerify();
-        const user = req.user as { id: string; email: string; role: string; name?: string } | undefined;
-        authorId = user?.id;
-        if (!authorName && user?.name) {
-          authorName = user.name;
-        }
-      } catch {
-        throw new UnauthorizedError('Authentication required to send employee replies');
-      }
-    }
-
-    const replyAttachments = (body.attachments || []).map((att) => ({
-      originalName: att.original_name,
-      mimeType: att.mime_type || 'application/octet-stream',
-      content: Buffer.from(att.data, 'base64'),
-    }));
-
-    const replyRecord = await ticketsService.addReply(id, {
-      body: body.body,
-      senderType: body.sender_type,
-      mailboxId: body.mailbox_id || undefined,
-      authorId,
-      authorName,
-      attachments: replyAttachments.length > 0 ? replyAttachments : undefined,
-    });
-    return reply.status(201).send(replyRecord);
-  });
-
-  // GET /api/tickets/:id/attachments - Staff only
-  app.get('/:id/attachments', async (req, reply) => {
-    const query = (req.query || {}) as { token?: string };
-    try {
-      if (query.token) {
-        req.user = app.jwt.verify(query.token);
-      } else {
-        await req.jwtVerify();
-      }
-    } catch {
-      throw new UnauthorizedError('Authentication required to view attachments');
-    }
-    const { id } = req.params as { id: string };
-    if (!storageService) {
-      return reply.status(200).send([]);
-    }
-    const attachments = await storageService.findByTicketId(id);
-    return reply.status(200).send(attachments);
-  });
-
-  // GET /api/tickets/:id/attachments/:attachmentId/download - Staff only
-  app.get('/:id/attachments/:attachmentId/download', async (req, reply) => {
-    const query = (req.query || {}) as { inline?: string; token?: string };
-    try {
-      if (query.token) {
-        req.user = app.jwt.verify(query.token);
-      } else {
-        await req.jwtVerify();
-      }
-    } catch {
-      throw new UnauthorizedError('Authentication required to download attachments');
-    }
-    const { id, attachmentId } = req.params as { id: string; attachmentId: string };
-    const { inline } = query;
-    if (!storageService) {
-      throw new NotFoundError('Storage service not available');
-    }
-    const attachment = await storageService.findById(attachmentId);
-    if (!attachment || attachment.ticketId !== id) {
-      throw new NotFoundError('Attachment not found');
-    }
-
-    if (attachment.isPurged || !fs.existsSync(attachment.storagePath)) {
-      const env = getEnvConfig();
-      const retentionHours = env.ATTACHMENT_RETENTION_HOURS || 168;
-      const retentionText = retentionHours % 24 === 0 && retentionHours >= 48
-        ? `${retentionHours / 24}-days`
-        : (retentionHours === 24 ? '24-hour' : `${retentionHours}-hour`);
-
-      return reply.status(410).send({
-        error: 'GONE',
-        message: `This attachment has expired and was purged per the ${retentionText} retention policy for resolved tickets.`,
-        purgedAt: attachment.purgedAt,
-      });
-    }
-
-    // Security fix (SEC-04): Prevent Stored XSS via malicious inline attachments
-    // Only allow inline disposition for safe, non-executable image types
-    const SAFE_INLINE_MIME_TYPES = new Set([
-      'image/jpeg',
-      'image/png',
-      'image/gif',
-      'image/webp',
-    ]);
-
-    const isSafeInline = inline === 'true' && SAFE_INLINE_MIME_TYPES.has((attachment.mimeType || '').toLowerCase());
-    const dispositionType = isSafeInline ? 'inline' : 'attachment';
-
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
-    reply.header('Content-Type', isSafeInline ? attachment.mimeType : (attachment.mimeType || 'application/octet-stream'));
-    reply.header('Content-Disposition', `${dispositionType}; filename="${encodeURIComponent(attachment.originalName)}"`);
-
-    const stream = fs.createReadStream(attachment.storagePath);
-    return reply.send(stream);
-  });
-
-  // DELETE /api/tickets/:id - Delete ticket and storage files (Administrators only)
-  app.delete('/:id', async (req, reply) => {
-    const { id } = req.params as { id: string };
-
-    try {
-      await req.jwtVerify();
-    } catch {
-      throw new UnauthorizedError('Authentication required to delete tickets');
-    }
-
-    const payload = req.user as { role?: string; id?: string; email?: string };
-    if (payload?.role !== 'admin') {
-      throw new ForbiddenError('Only administrators can delete tickets');
-    }
-
-    if (storageService) {
-      await storageService.deleteTicketStorage(id);
-    }
-    await ticketsService.deleteTicket(id);
-    logger.info({ ticketId: id, by: payload.email }, 'Ticket deleted by admin');
-    return reply.status(200).send({ success: true, message: 'Ticket deleted successfully' });
-  });
-
   done();
 }
-

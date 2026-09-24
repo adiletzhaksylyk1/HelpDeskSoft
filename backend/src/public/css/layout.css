@@ -29,7 +29,10 @@ header {
   border-radius: 8px;
   padding: 4px 8px;
   margin: -4px -8px;
-  transition: opacity 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.15s ease;
   user-select: none;
 }
 
@@ -105,6 +108,8 @@ body.dark-theme .brand-link:hover {
   display: flex;
   flex: 1;
   height: calc(100vh - 58px);
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   position: relative;
 }
@@ -149,7 +154,9 @@ body.dark-theme .brand-link:hover {
   border-radius: 8px;
   cursor: pointer;
   color: var(--text);
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .sidebar-group-header:hover {
@@ -195,7 +202,9 @@ body.dark-theme .brand-link:hover {
 
 .sidebar-group-body {
   overflow: hidden;
-  transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+  transition:
+    max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease;
   max-height: 600px;
   opacity: 1;
 }
@@ -245,7 +254,7 @@ body.dark-theme .brand-link:hover {
 
 body.dark-theme .nav-item.active {
   background: rgba(0, 102, 255, 0.18);
-  color: #38BDF8;
+  color: #38bdf8;
 }
 
 .counter-pill {
@@ -268,7 +277,7 @@ body.dark-theme .nav-item.active {
 }
 
 body.dark-theme .pill-primary {
-  color: #38BDF8;
+  color: #38bdf8;
 }
 
 .pill-warning {
@@ -276,7 +285,7 @@ body.dark-theme .pill-primary {
 }
 
 body.dark-theme .pill-warning {
-  color: #FBBF24;
+  color: #fbbf24;
 }
 
 .nav-item-admin {
@@ -324,7 +333,7 @@ body.dark-theme .pill-warning {
 }
 
 body.dark-theme .nav-item.active .counter-pill {
-  background: #0066FF;
+  background: #0066ff;
   color: white;
 }
 
@@ -340,7 +349,7 @@ body.dark-theme .nav-item.active .counter-pill {
 
 body.dark-theme .nav-item.active .counter-pill.pill-primary,
 body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-primary {
-  color: #38BDF8;
+  color: #38bdf8;
 }
 
 .nav-item.active .counter-pill.pill-warning,
@@ -350,7 +359,7 @@ body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-primary {
 
 body.dark-theme .nav-item.active .counter-pill.pill-warning,
 body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-warning {
-  color: #FBBF24;
+  color: #fbbf24;
 }
 
 /* Split Pane Columns */
@@ -760,7 +769,9 @@ body.dark-theme .auth-screen {
   max-width: 400px;
   background: #ffffff;
   border-radius: 18px;
-  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03);
+  box-shadow:
+    0 10px 30px -5px rgba(0, 0, 0, 0.08),
+    0 4px 12px rgba(0, 0, 0, 0.03);
   padding: 38px 32px 30px;
   display: flex;
   flex-direction: column;
@@ -838,6 +849,10 @@ body.dark-theme .auth-card-subtitle {
   color: #1d4ed8;
 }
 
+.auth-card-alert.d-none {
+  display: none;
+}
+
 body.dark-theme .auth-card-alert.info {
   background: rgba(30, 64, 175, 0.22);
   border-color: #1e40af;
@@ -880,6 +895,26 @@ body.dark-theme .auth-card-alert.first-login {
   text-align: left;
 }
 
+.auth-field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.auth-field-help {
+  margin: 7px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* The search already has an accessible, custom clear button. */
+.search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
 .auth-field-input {
   width: 100%;
   height: 44px;
@@ -890,7 +925,9 @@ body.dark-theme .auth-card-alert.first-login {
   font-size: 14px;
   color: #111827;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
   box-sizing: border-box;
 }
 
@@ -929,7 +966,9 @@ body.dark-theme .auth-field-input:focus {
   justify-content: center;
   gap: 8px;
   margin-top: 6px;
-  transition: background-color 0.15s ease, transform 0.1s ease;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
 }
 
 .auth-submit-btn:hover {
@@ -949,6 +988,7 @@ body.dark-theme .auth-field-input:focus {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  width: 100vw;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
 }

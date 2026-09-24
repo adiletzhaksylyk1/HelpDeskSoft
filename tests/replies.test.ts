@@ -1,196 +1,185 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createTestDb, TestDbInstance } from './test-db.js';
-import { buildApp } from '../backend/src/app.js';
-import { SmtpService } from '../backend/src/modules/email/smtp.service.js';
-import { StorageService } from '../backend/src/modules/storage/storage.service.js';
-
-describe('Ticket Replies & Outbound Email Threading', () => {
-  let testDb: TestDbInstance;
-  let app: ReturnType<typeof buildApp>;
-  let mockSmtp: SmtpService;
-  let storageService: StorageService;
-  let tempStorageDir: string;
-  let sentMails: any[];
-
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import crypto from "node:crypto";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { createTestDb, type TestDbInstance } from "./test-db.js";
+import { buildApp } from "../backend/src/app.js";
+import { testSession } from "./helpers.js";
+import { SmtpService } from "../backend/src/modules/email/smtp.service.js";
+import { OutboxWorker } from "../backend/src/modules/email/outbox.worker.js";
+import { StorageService } from "../backend/src/modules/storage/storage.service.js";
+import { TicketsRepository } from "../backend/src/modules/tickets/tickets.repository.js";
+import { ImapWorker } from "../backend/src/modules/email/imap.worker.js";
+describe("Durable replies and delivery", () => {
+  let db: TestDbInstance,
+    app: ReturnType<typeof buildApp>,
+    smtp: SmtpService,
+    storage: StorageService,
+    outbox: OutboxWorker,
+    dir: string,
+    staff: Awaited<ReturnType<typeof testSession>>;
   beforeEach(async () => {
-    testDb = await createTestDb();
-    sentMails = [];
-    tempStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'helpdesk-replies-test-'));
-    storageService = new StorageService(testDb.db, tempStorageDir);
-
-    // Create SmtpService with spy
-    mockSmtp = new SmtpService();
-    mockSmtp.sendReply = vi.fn().mockImplementation(async (opts) => {
-      const result = {
-        messageId: `<smtp-sent-${Date.now()}@helpdesk>`,
+    db = await createTestDb();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "hd-reply-"));
+    storage = new StorageService(db.db, dir);
+    smtp = new SmtpService();
+    smtp.validateMailbox = vi.fn().mockResolvedValue(undefined);
+    smtp.sendReply = vi
+      .fn()
+      .mockImplementation(async (opts) => ({
+        messageId: opts.messageId,
         accepted: [opts.to],
-      };
-      sentMails.push({ opts, result });
-      return result;
-    });
-
-    app = buildApp({ db: testDb.db, smtpService: mockSmtp, storageService, enableLogging: false });
-    await app.ready();
+      }));
+    app = buildApp({ db: db.db, storageService: storage, smtpService: smtp });
+    staff = await testSession(app, db);
+    outbox = new OutboxWorker(db.db, smtp, storage);
   });
-
   afterEach(async () => {
+    await outbox.stop();
     await app.close();
-    await testDb.cleanup();
-    if (fs.existsSync(tempStorageDir)) {
-      fs.rmSync(tempStorageDir, { recursive: true, force: true });
-    }
+    await db.cleanup();
+    fs.rmSync(dir, { recursive: true, force: true });
+    vi.restoreAllMocks();
   });
-
-  it('creates customer and employee replies maintaining chronology', async () => {
-    // Create initial ticket
-    const ticketRes = await app.inject({
-      method: 'POST',
-      url: '/api/tickets',
+  async function ticket() {
+    return new TicketsRepository(db.db).create({
+      senderEmail: "customer@test.invalid",
+      subject: "WiFi",
+      body: "Offline",
+      messageId: "<original@test>",
+    });
+  }
+  it("persists before dispatch, deduplicates submissions and threads customer follow-ups", async () => {
+    const t = await ticket(),
+      key = crypto.randomUUID();
+    const request = {
+      method: "POST" as const,
+      url: "/api/tickets/" + t.id + "/replies",
+      headers: { ...staff.headers, "idempotency-key": key },
       payload: {
-        sender_email: 'student@example.com',
-        subject: 'WiFi issue in library',
-        body: 'Cannot connect to Eduroam',
-        message_id: '<orig-wifi-101@example.com>',
+        body: "Try reconnecting",
+        sender_type: "EMPLOYEE",
+        author_name: "Forged Name",
       },
-    });
-    const ticketId = ticketRes.json().id;
-
-    // 1. Employee replies
-    const empToken = app.jwt.sign({ id: '00000000-0000-0000-0000-000000000001', email: 'staff@example.com', role: 'employee' });
-    const empReplyRes = await app.inject({
-      method: 'POST',
-      url: `/api/tickets/${ticketId}/replies`,
-      headers: { authorization: `Bearer ${empToken}` },
-      payload: {
-        body: 'Hello, please try forgetting the network and re-entering credentials.',
-        sender_type: 'EMPLOYEE',
-      },
-    });
-
-    expect(empReplyRes.statusCode).toBe(201);
-    const empReply = empReplyRes.json();
-    expect(empReply.ticketId).toBe(ticketId);
-    expect(empReply.senderType).toBe('EMPLOYEE');
-    expect(empReply.body).toContain('forgetting the network');
-
-    // Verify SMTP was called for EMPLOYEE reply
-    expect(mockSmtp.sendReply).toHaveBeenCalledTimes(1);
-    expect(sentMails[0].opts.to).toBe('student@example.com');
-    expect(sentMails[0].opts.subject).toBe('Re: WiFi issue in library');
-    expect(sentMails[0].opts.inReplyToMessageId).toBe('<orig-wifi-101@example.com>');
-    expect(sentMails[0].opts.references).toContain('<orig-wifi-101@example.com>');
-
-    // 2. Customer follows up
-    const custReplyRes = await app.inject({
-      method: 'POST',
-      url: `/api/tickets/${ticketId}/replies`,
-      payload: {
-        body: 'Thank you! That resolved my issue.',
-        sender_type: 'CUSTOMER',
-      },
-    });
-
-    expect(custReplyRes.statusCode).toBe(201);
-    expect(custReplyRes.json().senderType).toBe('CUSTOMER');
-    // SMTP should NOT be called for CUSTOMER replies
-    expect(mockSmtp.sendReply).toHaveBeenCalledTimes(1);
-
-    // 3. Fetch all replies in chronological order
-    const listRepliesRes = await app.inject({
-      method: 'GET',
-      url: `/api/tickets/${ticketId}/replies`,
-      headers: { authorization: `Bearer ${empToken}` },
-    });
-
-    expect(listRepliesRes.statusCode).toBe(200);
-    const allReplies = listRepliesRes.json();
-    expect(allReplies).toHaveLength(2);
-    expect(allReplies[0].senderType).toBe('EMPLOYEE');
-    expect(allReplies[1].senderType).toBe('CUSTOMER');
+    };
+    const response = await app.inject(request);
+    expect(response.statusCode).toBe(201);
+    expect(response.json().deliveryStatus).toBe("pending");
+    expect(response.json().authorName).toBe(staff.user.name);
+    expect(smtp.sendReply).not.toHaveBeenCalled();
+    const repeated = await app.inject(request);
+    expect(repeated.json().id).toBe(response.json().id);
+    await outbox.process();
+    expect(smtp.sendReply).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(smtp.sendReply).mock.calls[0][0].inReplyToMessageId).toBe(
+      t.messageId,
+    );
+    await outbox.process();
+    expect(smtp.sendReply).toHaveBeenCalledTimes(1);
+    await new ImapWorker(
+      new TicketsRepository(db.db),
+      storage,
+    ).processIncomingMail(
+      "From: customer@test.invalid\r\nMessage-ID: <followup@test>\r\nIn-Reply-To: " +
+        response.json().messageId +
+        "\r\n\r\nThank you",
+    );
+    const thread = await new TicketsRepository(db.db).findById(t.id);
+    expect(thread?.replies).toHaveLength(2);
+    expect(thread?.status).toBe("WAITING");
+    expect(thread?.replies?.[0].deliveryStatus).toBe("sent");
+    expect((await new TicketsRepository(db.db).findMany()).total).toBe(1);
   });
-
-  it('rejects empty reply body with 400 validation error', async () => {
-    const ticketRes = await app.inject({
-      method: 'POST',
-      url: '/api/tickets',
-      payload: {
-        sender_email: 'test@example.com',
-        subject: 'Title',
-        body: 'Body',
+  it("streams an 800KB attachment, associates it with a reply, and dispatches its exact bytes", async () => {
+    const t = await ticket(),
+      bytes = Buffer.alloc(800000, 42);
+    const upload = await app.inject({
+      method: "POST",
+      url: "/api/tickets/" + t.id + "/uploads",
+      headers: {
+        ...staff.headers,
+        "content-type": "application/octet-stream",
+        "x-filename": "guide.bin",
+        "idempotency-key": crypto.randomUUID(),
       },
+      payload: bytes,
     });
-    const ticketId = ticketRes.json().id;
-
-    const emptyReplyRes = await app.inject({
-      method: 'POST',
-      url: `/api/tickets/${ticketId}/replies`,
-      payload: {
-        body: '',
-        sender_type: 'EMPLOYEE',
-      },
+    expect(upload.statusCode).toBe(201);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tickets/" + t.id + "/replies",
+      headers: { ...staff.headers, "idempotency-key": crypto.randomUUID() },
+      payload: { body: "See guide", attachment_ids: [upload.json().id] },
     });
-
-    expect(emptyReplyRes.statusCode).toBe(400);
+    expect(response.statusCode).toBe(201);
+    await outbox.process();
+    expect(
+      vi
+        .mocked(smtp.sendReply)
+        .mock.calls[0][0].attachments?.[0].content.equals(bytes),
+    ).toBe(true);
+    expect((await storage.findById(upload.json().id))?.replyId).toBe(
+      response.json().id,
+    );
   });
-
-  it('sends employee reply with attachments via SMTP and stores them in database and storage', async () => {
-    const ticketRes = await app.inject({
-      method: 'POST',
-      url: '/api/tickets',
-      payload: {
-        sender_email: 'student@example.com',
-        subject: 'VPN Setup',
-        body: 'Need VPN instructions',
-        message_id: '<vpn-help-1@example.com>',
-      },
+  it("marks ambiguous sends uncertain and does not automatically resend", async () => {
+    const t = await ticket();
+    smtp.sendReply = vi
+      .fn()
+      .mockRejectedValue(new Error("Socket closed after DATA"));
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tickets/" + t.id + "/replies",
+      headers: { ...staff.headers, "idempotency-key": crypto.randomUUID() },
+      payload: { body: "Update" },
     });
-    const ticketId = ticketRes.json().id;
-
-    // Base64 encoded test file content
-    const sampleText = 'Step 1: Download client. Step 2: Connect to vpn.uni.edu';
-    const base64Data = Buffer.from(sampleText).toString('base64');
-
-    const empToken = app.jwt.sign({ id: '00000000-0000-0000-0000-000000000001', email: 'staff@example.com', role: 'employee' });
-    const replyRes = await app.inject({
-      method: 'POST',
-      url: `/api/tickets/${ticketId}/replies`,
-      headers: { authorization: `Bearer ${empToken}` },
-      payload: {
-        body: 'Please find the VPN configuration guide attached.',
-        sender_type: 'EMPLOYEE',
-        attachments: [
-          {
-            original_name: 'vpn_guide.txt',
-            mime_type: 'text/plain',
-            data: base64Data,
-          },
-        ],
-      },
-    });
-
-    expect(replyRes.statusCode).toBe(201);
-
-    // Verify SMTP call received the attachment
-    expect(mockSmtp.sendReply).toHaveBeenCalledTimes(1);
-    expect(sentMails[0].opts.attachments).toBeDefined();
-    expect(sentMails[0].opts.attachments).toHaveLength(1);
-    expect(sentMails[0].opts.attachments[0].filename).toBe('vpn_guide.txt');
-    expect(sentMails[0].opts.attachments[0].content.toString()).toBe(sampleText);
-    expect(sentMails[0].opts.attachments[0].contentType).toBe('text/plain');
-
-    // Verify attachment appears in GET /api/tickets/:id/attachments
-    const attRes = await app.inject({
-      method: 'GET',
-      url: `/api/tickets/${ticketId}/attachments`,
-      headers: { authorization: `Bearer ${empToken}` },
-    });
-    expect(attRes.statusCode).toBe(200);
-    const attachments = attRes.json();
-    expect(attachments).toHaveLength(1);
-    expect(attachments[0].originalName).toBe('vpn_guide.txt');
+    await outbox.process();
+    await outbox.process();
+    expect(smtp.sendReply).toHaveBeenCalledTimes(1);
+    expect(
+      (await new TicketsRepository(db.db).findById(t.id))?.replies?.[0]
+        .deliveryStatus,
+    ).toBe("uncertain");
+    const retry = {
+      method: "POST" as const,
+      url: "/api/tickets/" + t.id + "/replies/" + response.json().id + "/retry",
+      headers: staff.headers,
+    };
+    expect(
+      (
+        await app.inject({
+          ...retry,
+          payload: { confirmPossibleDuplicate: false },
+        })
+      ).statusCode,
+    ).toBe(409);
+    expect(
+      (
+        await app.inject({
+          ...retry,
+          payload: { confirmPossibleDuplicate: true },
+        })
+      ).json().deliveryStatus,
+    ).toBe("pending");
+  });
+  it("rejects blank replies and prevents dispatch when persistence fails", async () => {
+    const t = await ticket();
+    const request = {
+      method: "POST" as const,
+      url: "/api/tickets/" + t.id + "/replies",
+      headers: { ...staff.headers, "idempotency-key": crypto.randomUUID() },
+    };
+    expect(
+      (await app.inject({ ...request, payload: { body: "  " } })).statusCode,
+    ).toBe(400);
+    vi.spyOn(TicketsRepository.prototype, "createReply").mockRejectedValueOnce(
+      new Error("Database unavailable"),
+    );
+    expect(
+      (await app.inject({ ...request, payload: { body: "Update" } }))
+        .statusCode,
+    ).toBe(500);
+    expect(smtp.sendReply).not.toHaveBeenCalled();
   });
 });
-

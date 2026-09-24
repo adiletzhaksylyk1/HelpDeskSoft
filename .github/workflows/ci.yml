@@ -1,0 +1,65 @@
+name: Verify helpdesk
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: helpdesk_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d helpdesk_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:test-only-password@127.0.0.1:5432/helpdesk_test
+      PG_TEST_BIN: /usr/lib/postgresql/16/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
+      - run: npm run lint
+      - run: npm test
+      - run: npm audit --audit-level=moderate
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-traces
+          path: test-results
+  container-and-restore:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-postgres-only-password
+      MIGRATION_DB_PASSWORD: ci-owner-only-password
+      APP_DB_PASSWORD: ci-runtime-only-password
+      JWT_SECRET: c3a3b3f5d5f132242a33828536345675ba7785b59baee74ca26abf3b6f73eefba
+      SECRET_ENCRYPTION_KEY: dba21e6b2c5631867a836f9560585414f2c8e8ff6cc5dc32b725cf5f4146ef678
+      CORS_ORIGIN: http://localhost:3000
+      COMPOSE_PROJECT_NAME: helpdesk-ci
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build --wait backend
+      - run: |
+          curl --fail http://127.0.0.1:3000/health
+          test "$(docker compose exec -T backend id -u)" = 1000
+          docker compose exec -T backend node -e "const pg=require('pg'); const c=new pg.Client({connectionString:process.env.DATABASE_URL}); c.connect().then(()=>c.query('CREATE TABLE forbidden(id integer)')).then(()=>process.exit(1)).catch(e=>process.exit(e.code==='42501'?0:1));"
+          docker compose exec -T backend sh -c 'printf backup-fixture > /app/storage/restore-fixture.txt'
+          sh ops/backup.sh backups/ci
+          COMPOSE_PROJECT_NAME=helpdesk-ci-restore sh ops/restore.sh backups/ci
+          COMPOSE_PROJECT_NAME=helpdesk-ci-restore docker compose run --rm --no-deps --entrypoint cat backend /app/storage/restore-fixture.txt | grep backup-fixture
+          COMPOSE_PROJECT_NAME=helpdesk-ci-restore docker compose exec -T postgres psql -U postgres -d helpdesk -Atc 'SELECT version FROM schema_migrations WHERE version=3' | grep 3
+      - if: always()
+        run: |
+          docker compose logs --no-color
+          docker compose down -v
+          COMPOSE_PROJECT_NAME=helpdesk-ci-restore docker compose down -v

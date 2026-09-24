@@ -1,35 +1,21 @@
-import { logger } from '../../shared/logger.js';
-
+import crypto from "node:crypto";
+import { getEnvConfig } from "../../config/env.js";
 export interface GraphConfig {
   tenantId: string;
   clientId: string;
   clientSecret: string;
   mailboxEmail: string;
 }
-
-export interface GraphAttachment {
-  filename: string;
-  contentType: string;
-  size: number;
-  content: Buffer;
+export class GraphHttpError extends Error {
+  constructor(readonly status: number) {
+    super("Microsoft Graph request failed (" + status + ")");
+  }
 }
-
-export interface GraphIncomingMessage {
-  id: string;
-  internetMessageId: string;
-  subject: string;
-  bodyText: string;
-  bodyHtml?: string;
-  senderEmail: string;
-  senderName: string;
-  receivedDateTime: string;
-  attachments: GraphAttachment[];
-}
-
 export interface GraphSendReplyOptions {
   to: string;
   subject: string;
   text: string;
+  providerMessageId?: string;
   inReplyToMessageId?: string;
   references?: string[];
   attachments?: Array<{
@@ -38,248 +24,284 @@ export interface GraphSendReplyOptions {
     contentType?: string;
   }>;
 }
-
 export class GraphService {
-  private tokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
-
-  private getCacheKey(config: GraphConfig): string {
-    return `${config.tenantId}:${config.clientId}`;
-  }
-
+  private tokenCache = new Map<string, { token: string; expiresAt: number }>();
   async getAccessToken(config: GraphConfig): Promise<string> {
-    const key = this.getCacheKey(config);
+    const key = crypto
+      .createHash("sha256")
+      .update(config.tenantId + config.clientId + config.clientSecret)
+      .digest("hex");
     const cached = this.tokenCache.get(key);
-    // Return cached token if valid for at least 3 more minutes
-    if (cached && cached.expiresAt > Date.now() + 180000) {
-      return cached.token;
-    }
-
-    const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(config.tenantId)}/oauth2/v2.0/token`;
-    const params = new URLSearchParams();
-    params.append('client_id', config.clientId);
-    params.append('client_secret', config.clientSecret);
-    params.append('scope', 'https://graph.microsoft.com/.default');
-    params.append('grant_type', 'client_credentials');
-
-    const res = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-    });
-
-    const data: any = await res.json();
-    if (!res.ok) {
-      const errMsg = data.error_description || data.error || 'Failed to obtain access token from Microsoft Entra ID';
-      logger.error({ err: errMsg, tenantId: config.tenantId, clientId: config.clientId }, 'Entra ID OAuth2 token error');
-      throw new Error(`Entra ID Auth Error: ${errMsg}`);
-    }
-
-    const token = data.access_token;
-    const expiresInSec = typeof data.expires_in === 'number' ? data.expires_in : 3600;
+    if (cached && cached.expiresAt > Date.now() + 180000) return cached.token;
+    const response = await fetch(
+      "https://login.microsoftonline.com/" +
+        encodeURIComponent(config.tenantId) +
+        "/oauth2/v2.0/token",
+      {
+        method: "POST",
+        signal: AbortSignal.timeout(20000),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: config.clientId,
+          client_secret: config.clientSecret,
+          scope: "https://graph.microsoft.com/.default",
+          grant_type: "client_credentials",
+        }),
+      },
+    );
+    const data: any = await response.json();
+    if (!response.ok || !data.access_token)
+      throw new Error("Microsoft authentication failed");
+    if (this.tokenCache.size > 100) this.tokenCache.clear();
     this.tokenCache.set(key, {
-      token,
-      expiresAt: Date.now() + expiresInSec * 1000,
+      token: data.access_token,
+      expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
     });
-
-    return token;
+    return data.access_token;
   }
-
-  async testConnection(config: GraphConfig): Promise<{ success: boolean; message: string; displayName?: string }> {
-    try {
-      const token = await this.getAccessToken(config);
-      const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(config.mailboxEmail)}/mailFolders/inbox/messages?$top=1&$select=id,subject`;
-
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const data: any = await res.json();
-      if (!res.ok) {
-        const msg = data.error?.message || `Microsoft Graph API error (${res.status} ${res.statusText})`;
-        return { success: false, message: msg };
-      }
-
-      return {
-        success: true,
-        message: `Successfully connected to Microsoft 365 inbox (${config.mailboxEmail})`,
-      };
-    } catch (err: any) {
-      return {
-        success: false,
-        message: err?.message || 'Failed to connect to Microsoft Graph API',
-      };
-    }
+  private base(config: GraphConfig): string {
+    return (
+      "https://graph.microsoft.com/v1.0/users/" +
+      encodeURIComponent(config.mailboxEmail)
+    );
   }
-
-  async fetchUnreadMessages(config: GraphConfig, top = 20): Promise<GraphIncomingMessage[]> {
+  private async request(
+    config: GraphConfig,
+    url: string,
+    init: RequestInit = {},
+  ): Promise<Response> {
+    const parsed = new URL(url);
+    if (parsed.origin !== "https://graph.microsoft.com")
+      throw new Error("Invalid Graph cursor");
     const token = await this.getAccessToken(config);
-    const email = config.mailboxEmail.trim();
-
-    // Query unread messages from Inbox folder, expanding attachments
-    const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(email)}/mailFolders/inbox/messages` +
-      `?$filter=isRead eq false` +
-      `&$top=${top}` +
-      `&$select=id,conversationId,internetMessageId,subject,body,from,receivedDateTime,hasAttachments` +
-      `&$expand=attachments` +
-      `&$orderby=receivedDateTime asc`;
-
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Prefer: 'outlook.body-content-type="text"',
-      },
-    });
-
-    const data: any = await res.json();
-    if (!res.ok) {
-      const errMsg = data.error?.message || `Graph API error fetching mail (${res.status})`;
-      logger.error({ err: errMsg, email }, 'Error fetching messages from Graph API');
-      throw new Error(errMsg);
-    }
-
-    const messages: GraphIncomingMessage[] = [];
-    const items = data.value || [];
-
-    for (const item of items) {
-      const internetMessageId = item.internetMessageId || `<graph-${item.id}@${email}>`;
-      const senderEmail = item.from?.emailAddress?.address || 'unknown@example.com';
-      const senderName = item.from?.emailAddress?.name || senderEmail;
-      const subject = item.subject || '(No Subject)';
-      const bodyText = item.body?.content || '';
-
-      const attachments: GraphAttachment[] = [];
-      let rawAttachments: any[] = Array.isArray(item.attachments) ? item.attachments : [];
-
-      if (rawAttachments.length === 0 && item.hasAttachments) {
-        try {
-          const attUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(email)}/messages/${encodeURIComponent(item.id)}/attachments`;
-          const attRes = await fetch(attUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (attRes.ok) {
-            const attData: any = await attRes.json();
-            if (Array.isArray(attData.value)) {
-              rawAttachments = attData.value;
-            }
-          }
-        } catch (attFetchErr) {
-          logger.warn({ err: attFetchErr, messageId: item.id }, 'Could not fetch message attachments fallback from Graph');
-        }
-      }
-
-      for (const att of rawAttachments) {
-        if (att['@odata.type'] === '#microsoft.graph.fileAttachment' && att.contentBytes) {
-          const contentBuf = Buffer.from(att.contentBytes, 'base64');
-          attachments.push({
-            filename: att.name || 'attachment',
-            contentType: att.contentType || 'application/octet-stream',
-            size: att.size || contentBuf.length,
-            content: contentBuf,
-          });
-        }
-      }
-
-      messages.push({
-        id: item.id,
-        internetMessageId,
-        subject,
-        bodyText,
-        senderEmail,
-        senderName,
-        receivedDateTime: item.receivedDateTime,
-        attachments,
-      });
-    }
-
-    return messages;
-  }
-
-  async markAsRead(config: GraphConfig, messageId: string): Promise<void> {
-    const token = await this.getAccessToken(config);
-    const email = config.mailboxEmail.trim();
-
-    const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(email)}/messages/${encodeURIComponent(messageId)}`;
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ isRead: true }),
-    });
-
-    if (!res.ok) {
-      const data: any = await res.json().catch(() => ({}));
-      logger.warn({ err: data.error?.message, messageId, email }, 'Failed to mark Graph message as read');
-    }
-  }
-
-  async sendMail(config: GraphConfig, options: GraphSendReplyOptions): Promise<{ messageId: string }> {
-    const token = await this.getAccessToken(config);
-    const email = config.mailboxEmail.trim();
-
-    const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(email)}/sendMail`;
-
-    const headers: Array<{ name: string; value: string }> = [];
-    if (options.inReplyToMessageId) {
-      headers.push({ name: 'X-In-Reply-To', value: options.inReplyToMessageId });
-    }
-    if (options.references && options.references.length > 0) {
-      headers.push({ name: 'X-References', value: options.references.join(' ') });
-    }
-
-    const attachmentsPayload: any[] = [];
-    if (options.attachments && options.attachments.length > 0) {
-      for (const att of options.attachments) {
-        attachmentsPayload.push({
-          '@odata.type': '#microsoft.graph.fileAttachment',
-          name: att.filename,
-          contentType: att.contentType || 'application/octet-stream',
-          contentBytes: att.content.toString('base64'),
-        });
-      }
-    }
-
-    const payload = {
-      message: {
-        subject: options.subject.startsWith('Re:') ? options.subject : `Re: ${options.subject}`,
-        body: {
-          contentType: 'Text',
-          content: options.text,
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(url, {
+        ...init,
+        signal: init.signal
+          ? AbortSignal.any([init.signal, AbortSignal.timeout(20000)])
+          : AbortSignal.timeout(20000),
+        headers: {
+          Authorization: "Bearer " + token,
+          Prefer: 'IdType="ImmutableId", odata.maxpagesize=10',
+          ...init.headers,
         },
-        toRecipients: [
-          {
-            emailAddress: {
-              address: options.to,
-            },
-          },
-        ],
-        internetMessageHeaders: headers.length > 0 ? headers : undefined,
-        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : undefined,
-      },
-      saveToSentItems: true,
-    };
-
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const data: any = await res.json().catch(() => ({}));
-      const msg = data.error?.message || `Graph sendMail failed (${res.status} ${res.statusText})`;
-      logger.error({ err: msg, to: options.to, email }, 'Error sending email via Graph API');
-      throw new Error(msg);
+      });
+      if (
+        (!init.method || init.method === "GET") &&
+        [429, 502, 503, 504].includes(response.status) &&
+        attempt < 2
+      ) {
+        const delay = Math.min(
+          10000,
+          Math.max(
+            1000,
+            Number(response.headers.get("retry-after") || attempt + 1) * 1000,
+          ),
+        );
+        await response.body?.cancel();
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new GraphHttpError(response.status);
+      }
+      return response;
     }
-
-    const syntheticId = `<graph-sent-${Date.now()}@${email}>`;
-    logger.info({ to: options.to, mailbox: email }, 'Outbound email sent via Microsoft Graph API');
-    return { messageId: syntheticId };
+  }
+  async testConnection(
+    config: GraphConfig,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      await this.fetchPage(config);
+      return { success: true, message: "Connected to Microsoft 365 inbox" };
+    } catch (error: any) {
+      return { success: false, message: error.message };
+    }
+  }
+  async fetchPage(
+    config: GraphConfig,
+    cursor?: string | null,
+  ): Promise<{ ids: string[]; cursor: string }> {
+    const url =
+      cursor ||
+      this.base(config) + "/mailFolders/inbox/messages/delta?$select=id";
+    const response = await this.request(config, url);
+    const data: any = await response.json();
+    const next = data["@odata.nextLink"] || data["@odata.deltaLink"];
+    if (!next) throw new Error("Graph did not return a sync checkpoint");
+    return {
+      ids: (data.value || [])
+        .filter((m: any) => !m["@removed"])
+        .map((m: any) => m.id),
+      cursor: next,
+    };
+  }
+  async getMime(config: GraphConfig, id: string): Promise<Buffer> {
+    const response = await this.request(
+      config,
+      this.base(config) + "/messages/" + encodeURIComponent(id) + "/$value",
+    );
+    const max = getEnvConfig().MAX_MESSAGE_BYTES;
+    const chunks: Buffer[] = [];
+    let size = 0;
+    if (Number(response.headers.get("content-length") || 0) > max) {
+      await response.body?.cancel();
+      throw new Error("Message exceeds configured size limit");
+    }
+    if (!response.body) throw new Error("Empty Graph response");
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > max) {
+        throw new Error("Message exceeds configured size limit");
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+  async sendMail(
+    config: GraphConfig,
+    options: GraphSendReplyOptions,
+  ): Promise<{ messageId: string; providerMessageId: string }> {
+    const signal = AbortSignal.timeout(180000);
+    const base = this.base(config);
+    const content = {
+      subject: options.subject.startsWith("Re:")
+        ? options.subject
+        : "Re: " + options.subject,
+      body: { contentType: "Text", content: options.text },
+      toRecipients: [{ emailAddress: { address: options.to } }],
+    };
+    const draftResponse = await this.request(
+      config,
+      options.providerMessageId
+        ? base +
+            "/messages/" +
+            encodeURIComponent(options.providerMessageId) +
+            "/createReply"
+        : base + "/messages",
+      {
+        method: "POST",
+        signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          options.providerMessageId ? { message: content } : content,
+        ),
+      },
+    );
+    const draft: any = await draftResponse.json();
+    if (!draft.id) throw new Error("Missing Graph draft id");
+    for (const attachment of options.attachments || []) {
+      if (attachment.content.length < 3 * 1024 * 1024) {
+        await this.request(
+          config,
+          base + "/messages/" + encodeURIComponent(draft.id) + "/attachments",
+          {
+            method: "POST",
+            signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              "@odata.type": "#microsoft.graph.fileAttachment",
+              name: attachment.filename,
+              contentType: attachment.contentType,
+              contentBytes: attachment.content.toString("base64"),
+            }),
+          },
+        );
+      } else {
+        const session = await this.request(
+          config,
+          base +
+            "/messages/" +
+            encodeURIComponent(draft.id) +
+            "/attachments/createUploadSession",
+          {
+            method: "POST",
+            signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              AttachmentItem: {
+                attachmentType: "file",
+                name: attachment.filename,
+                size: attachment.content.length,
+                contentType: attachment.contentType,
+              },
+            }),
+          },
+        );
+        const data: any = await session.json();
+        const upload = new URL(data.uploadUrl);
+        if (
+          upload.protocol !== "https:" ||
+          !(
+            upload.hostname.endsWith(".outlook.com") ||
+            upload.hostname.endsWith(".office.com") ||
+            upload.hostname === "graph.microsoft.com"
+          )
+        )
+          throw new Error("Invalid upload session");
+        for (
+          let offset = 0;
+          offset < attachment.content.length;
+          offset += 320 * 1024
+        ) {
+          const chunk = attachment.content.subarray(
+            offset,
+            Math.min(offset + 320 * 1024, attachment.content.length),
+          );
+          const response = await fetch(upload, {
+            method: "PUT",
+            signal: AbortSignal.any([signal, AbortSignal.timeout(20000)]),
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "Content-Range":
+                "bytes " +
+                offset +
+                "-" +
+                (offset + chunk.length - 1) +
+                "/" +
+                attachment.content.length,
+            },
+            body: new Uint8Array(chunk),
+          });
+          if (!response.ok) throw new Error("Graph attachment upload failed");
+          await response.body?.cancel();
+        }
+      }
+    }
+    await this.request(
+      config,
+      base + "/messages/" + encodeURIComponent(draft.id) + "/send",
+      { method: "POST", signal },
+    );
+    let sent: any;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        sent = await (
+          await this.request(
+            config,
+            base +
+              "/messages/" +
+              encodeURIComponent(draft.id) +
+              "?$select=internetMessageId",
+            { signal },
+          )
+        ).json();
+        if (sent.internetMessageId) break;
+      } catch (error) {
+        if (!(error instanceof GraphHttpError) || error.status !== 404)
+          throw error;
+      }
+      if (attempt < 3)
+        await new Promise((resolve) =>
+          setTimeout(resolve, 1000 * 2 ** attempt),
+        );
+    }
+    if (!sent?.internetMessageId)
+      throw new Error(
+        "Sent message id unavailable; delivery needs reconciliation",
+      );
+    return { messageId: sent.internetMessageId, providerMessageId: draft.id };
   }
 }
-
 export const graphService = new GraphService();

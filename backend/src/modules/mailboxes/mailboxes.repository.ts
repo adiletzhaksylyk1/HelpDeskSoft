@@ -1,117 +1,147 @@
-import { eq, desc } from 'drizzle-orm';
-import type { AppDatabase } from '../../db/index.js';
-import { mailboxes, type Mailbox, type NewMailbox } from '../../db/schema.js';
-
-export type SafeMailbox = Omit<Mailbox, 'imapPassword' | 'smtpPassword' | 'msClientSecret'> & {
+import { eq, desc, sql } from "drizzle-orm";
+import type { AppDatabase } from "../../db/index.js";
+import {
+  mailboxes,
+  roles,
+  type Mailbox,
+  type NewMailbox,
+} from "../../db/schema.js";
+import { encryptSecret, decryptSecret } from "../../shared/secrets.js";
+import { withDbLock } from "../../db/lock.js";
+import { ValidationError } from "../../shared/errors.js";
+export type SafeMailbox = Omit<
+  Mailbox,
+  "imapPassword" | "smtpPassword" | "msClientSecret"
+> & {
   hasImapPassword: boolean;
   hasSmtpPassword: boolean;
   hasMsClientSecret: boolean;
 };
-
 export class MailboxesRepository {
-  constructor(private readonly db: AppDatabase) {}
-
-  async findAll(): Promise<Mailbox[]> {
-    return this.db
-      .select()
-      .from(mailboxes)
-      .orderBy(desc(mailboxes.createdAt));
-  }
-
-  async findActive(): Promise<Mailbox[]> {
-    return this.db
-      .select()
-      .from(mailboxes)
-      .where(eq(mailboxes.isActive, true))
-      .orderBy(desc(mailboxes.createdAt));
-  }
-
-  async findById(id: string): Promise<Mailbox | null> {
-    const [item] = await this.db
-      .select()
-      .from(mailboxes)
-      .where(eq(mailboxes.id, id))
-      .limit(1);
-    return item || null;
-  }
-
-  async findByEmail(email: string): Promise<Mailbox | null> {
-    const [item] = await this.db
-      .select()
-      .from(mailboxes)
-      .where(eq(mailboxes.email, email.toLowerCase().trim()))
-      .limit(1);
-    return item || null;
-  }
-
-  async create(data: Omit<NewMailbox, 'id' | 'createdAt' | 'updatedAt'>): Promise<Mailbox> {
-    const [item] = await this.db
-      .insert(mailboxes)
-      .values({
-        ...data,
-        email: data.email.toLowerCase().trim(),
-        provider: data.provider || 'imap',
-        targetRole: data.targetRole ? data.targetRole.trim() : null,
-        msTenantId: data.msTenantId ? data.msTenantId.trim() : null,
-        msClientId: data.msClientId ? data.msClientId.trim() : null,
-        msClientSecret: data.msClientSecret ? data.msClientSecret.trim() : null,
-        imapHost: data.imapHost ? data.imapHost.trim() : '',
-        imapUser: data.imapUser ? data.imapUser.trim() : '',
-        imapPassword: data.imapPassword ? data.imapPassword.trim() : '',
-        smtpHost: data.smtpHost ? data.smtpHost.trim() : '',
-        smtpUser: data.smtpUser ? data.smtpUser.trim() : '',
-        smtpPassword: data.smtpPassword ? data.smtpPassword.trim() : '',
-      })
-      .returning();
-    return item;
-  }
-
-  async update(id: string, data: Partial<NewMailbox>): Promise<Mailbox | null> {
-    const updatePayload: Record<string, any> = {
-      ...data,
-      updatedAt: new Date(),
+  constructor(readonly db: AppDatabase) {}
+  private decode(m: Mailbox): Mailbox {
+    return {
+      ...m,
+      imapPassword: decryptSecret(m.imapPassword) || "",
+      smtpPassword: decryptSecret(m.smtpPassword) || "",
+      msClientSecret: decryptSecret(m.msClientSecret),
     };
-    if (data.email) updatePayload.email = data.email.toLowerCase().trim();
-    if (data.targetRole !== undefined) updatePayload.targetRole = data.targetRole ? data.targetRole.trim() : null;
-    if (data.imapUser !== undefined) updatePayload.imapUser = data.imapUser.trim();
-    if (data.smtpUser !== undefined) updatePayload.smtpUser = data.smtpUser.trim();
-    if (data.msTenantId !== undefined) updatePayload.msTenantId = data.msTenantId?.trim() ?? null;
-    if (data.msClientId !== undefined) updatePayload.msClientId = data.msClientId?.trim() ?? null;
-    if (data.msClientSecret !== undefined) updatePayload.msClientSecret = data.msClientSecret?.trim() ?? null;
-
-    const [updated] = await this.db
-      .update(mailboxes)
-      .set(updatePayload)
-      .where(eq(mailboxes.id, id))
-      .returning();
-    return updated || null;
   }
-
+  private encode(data: Partial<NewMailbox>): Partial<NewMailbox> {
+    const next = { ...data };
+    if (next.email) next.email = next.email.trim().toLowerCase();
+    for (const key of [
+      "imapPassword",
+      "smtpPassword",
+      "msClientSecret",
+    ] as const)
+      if (next[key] !== undefined) next[key] = encryptSecret(next[key]) || "";
+    return next;
+  }
+  async findAll(): Promise<Mailbox[]> {
+    return (
+      await this.db.select().from(mailboxes).orderBy(desc(mailboxes.createdAt))
+    ).map((m) => this.decode(m));
+  }
+  async findActive(): Promise<Mailbox[]> {
+    return (
+      await this.db.select().from(mailboxes).where(eq(mailboxes.isActive, true))
+    ).map((m) => this.decode(m));
+  }
+  async findById(id: string): Promise<Mailbox | null> {
+    const [m] = await this.db
+      .select()
+      .from(mailboxes)
+      .where(eq(mailboxes.id, id));
+    return m ? this.decode(m) : null;
+  }
+  async findByEmail(email: string): Promise<Mailbox | null> {
+    const [m] = await this.db
+      .select()
+      .from(mailboxes)
+      .where(eq(mailboxes.email, email.trim().toLowerCase()));
+    return m ? this.decode(m) : null;
+  }
+  private async setRoles(
+    tx: AppDatabase,
+    id: string,
+    target: string | null | undefined,
+  ): Promise<void> {
+    await tx.execute(sql`DELETE FROM mailbox_roles WHERE mailbox_id=${id}`);
+    for (const name of (target || "")
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean)) {
+      const [role] = await tx.select().from(roles).where(eq(roles.name, name));
+      if (!role)
+        throw new ValidationError("Unknown routing department: " + name);
+      await tx.execute(
+        sql`INSERT INTO mailbox_roles(mailbox_id,role_id) VALUES (${id},${role.id}) ON CONFLICT DO NOTHING`,
+      );
+    }
+  }
+  async create(
+    data: Omit<NewMailbox, "id" | "createdAt" | "updatedAt">,
+  ): Promise<Mailbox> {
+    return withDbLock(this.db, 740003, async (tx) => {
+      const [m] = await tx
+        .insert(mailboxes)
+        .values(this.encode(data) as NewMailbox)
+        .returning();
+      await this.setRoles(tx, m.id, data.targetRole);
+      return this.decode(m);
+    });
+  }
+  async update(id: string, data: Partial<NewMailbox>): Promise<Mailbox | null> {
+    return withDbLock(this.db, 740003, async (tx) => {
+      const [old] = await tx
+        .select()
+        .from(mailboxes)
+        .where(eq(mailboxes.id, id));
+      if (!old) return null;
+      const merged = { ...this.decode(old), ...data };
+      if (
+        merged.isActive &&
+        (merged.provider === "graph"
+          ? !(merged.msTenantId && merged.msClientId && merged.msClientSecret)
+          : !(merged.imapHost && merged.imapUser && merged.imapPassword))
+      )
+        throw new ValidationError("Mailbox credentials incomplete");
+      if (data.targetRole !== undefined)
+        await this.setRoles(tx, id, data.targetRole);
+      const providerChanged =
+        data.provider !== undefined && data.provider !== old.provider;
+      const [m] = await tx
+        .update(mailboxes)
+        .set({
+          ...this.encode(data),
+          ...(providerChanged ? { syncCursor: null, uidValidity: null } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(mailboxes.id, id))
+        .returning();
+      return this.decode(m);
+    });
+  }
   async delete(id: string): Promise<boolean> {
-    const result = await this.db
-      .delete(mailboxes)
-      .where(eq(mailboxes.id, id))
-      .returning({ id: mailboxes.id });
-    return result.length > 0;
+    return (
+      (await this.db.delete(mailboxes).where(eq(mailboxes.id, id)).returning())
+        .length > 0
+    );
   }
-
   async updateSyncStatus(id: string, error?: string | null): Promise<void> {
     await this.db
       .update(mailboxes)
-      .set({
-        lastSyncAt: new Date(),
-        lastSyncError: error ?? null,
-      })
+      .set({ lastSyncAt: new Date(), lastSyncError: error ?? null })
       .where(eq(mailboxes.id, id));
   }
-
-  toSafeMailbox(mailbox: Mailbox): SafeMailbox {
-    const { imapPassword, smtpPassword, msClientSecret, ...safe } = mailbox;
+  toSafeMailbox(m: Mailbox): SafeMailbox {
+    const { imapPassword, smtpPassword, msClientSecret, ...safe } = m;
     return {
       ...safe,
-      hasImapPassword: Boolean(imapPassword),
-      hasSmtpPassword: Boolean(smtpPassword),
-      hasMsClientSecret: Boolean(msClientSecret),
+      hasImapPassword: !!imapPassword,
+      hasSmtpPassword: !!smtpPassword,
+      hasMsClientSecret: !!msClientSecret,
     };
   }
 }

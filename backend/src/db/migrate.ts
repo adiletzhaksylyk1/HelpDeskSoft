@@ -1,6 +1,8 @@
-import pg from 'pg';
-import { getEnvConfig } from '../config/env.js';
-import { logger } from '../shared/logger.js';
+import pg from "pg";
+import { HARDENING_SQL } from "./hardening.js";
+import { encryptSecret } from "../shared/secrets.js";
+import { getEnvConfig } from "../config/env.js";
+import { logger } from "../shared/logger.js";
 
 const { Pool } = pg;
 
@@ -133,63 +135,58 @@ CREATE UNIQUE INDEX IF NOT EXISTS deleted_tickets_message_id_idx ON deleted_tick
 CREATE INDEX IF NOT EXISTS deleted_tickets_mailbox_id_idx ON deleted_tickets(mailbox_id);
 `;
 
-
-export async function runMigrations(clientOrPool?: pg.Client | pg.Pool): Promise<void> {
-  let poolToClose: pg.Pool | null = null;
-  let target = clientOrPool;
-
-  if (!target) {
-    const env = getEnvConfig();
-    const url = new URL(env.DATABASE_URL);
-    const targetDbName = url.pathname.replace(/^\//, '') || 'helpdesk';
-
-    // First connect to default 'postgres' database to ensure target database exists
-    const adminUrl = new URL(env.DATABASE_URL);
-    adminUrl.pathname = '/postgres';
-
-    const adminPool = new Pool({ connectionString: adminUrl.toString() });
-    try {
-      const checkRes = await adminPool.query(
-        'SELECT 1 FROM pg_database WHERE datname = $1',
-        [targetDbName]
-      );
-      if (checkRes.rows.length === 0) {
-        logger.info({ targetDbName }, `Database '${targetDbName}' does not exist. Creating...`);
-        // Identifier cannot be parameterized in CREATE DATABASE
-        await adminPool.query(`CREATE DATABASE "${targetDbName}"`);
-        logger.info({ targetDbName }, `Database '${targetDbName}' created successfully.`);
-      }
-    } catch (adminErr: any) {
-      // If unable to connect to 'postgres' db or already exists, log and proceed
-      logger.debug({ err: adminErr }, 'Database existence check skipped or failed, proceeding to direct connect');
-    } finally {
-      await adminPool.end().catch(() => { });
-    }
-
-    poolToClose = new Pool({ connectionString: env.DATABASE_URL });
-    target = poolToClose;
-  }
-
-  try {
-    logger.info('Running database migrations...');
-    await target.query(INIT_SCHEMA_SQL);
-    await target.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
-    await target.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS mailbox_id UUID REFERENCES mailboxes(id) ON DELETE SET NULL;`);
-    await target.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recipient_email TEXT;`);
-    await target.query(`CREATE INDEX IF NOT EXISTS tickets_mailbox_id_idx ON tickets(mailbox_id);`);
-    await target.query(`CREATE INDEX IF NOT EXISTS tickets_recipient_email_idx ON tickets(recipient_email);`);
-    await target.query(`ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'imap';`);
-    await target.query(`ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS ms_tenant_id TEXT;`);
-    await target.query(`ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS ms_client_id TEXT;`);
-    await target.query(`ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS ms_client_secret TEXT;`);
-    await target.query(`ALTER TABLE mailboxes ALTER COLUMN imap_host DROP NOT NULL;`);
-    await target.query(`ALTER TABLE mailboxes ALTER COLUMN imap_password DROP NOT NULL;`);
-    await target.query(`ALTER TABLE mailboxes ALTER COLUMN imap_user DROP NOT NULL;`);
-    await target.query(`ALTER TABLE mailboxes ALTER COLUMN smtp_host DROP NOT NULL;`);
-    await target.query(`ALTER TABLE mailboxes ALTER COLUMN smtp_password DROP NOT NULL;`);
-    await target.query(`ALTER TABLE mailboxes ALTER COLUMN smtp_user DROP NOT NULL;`);
-    await target.query(`CREATE INDEX IF NOT EXISTS mailboxes_provider_idx ON mailboxes(provider);`);
-    await target.query(`
+async function initializeLegacy(target: pg.Client | pg.Pool): Promise<void> {
+  logger.info("Running database migrations...");
+  await target.query(INIT_SCHEMA_SQL);
+  await target.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`,
+  );
+  await target.query(
+    `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS mailbox_id UUID REFERENCES mailboxes(id) ON DELETE SET NULL;`,
+  );
+  await target.query(
+    `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recipient_email TEXT;`,
+  );
+  await target.query(
+    `CREATE INDEX IF NOT EXISTS tickets_mailbox_id_idx ON tickets(mailbox_id);`,
+  );
+  await target.query(
+    `CREATE INDEX IF NOT EXISTS tickets_recipient_email_idx ON tickets(recipient_email);`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'imap';`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS ms_tenant_id TEXT;`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS ms_client_id TEXT;`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS ms_client_secret TEXT;`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ALTER COLUMN imap_host DROP NOT NULL;`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ALTER COLUMN imap_password DROP NOT NULL;`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ALTER COLUMN imap_user DROP NOT NULL;`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ALTER COLUMN smtp_host DROP NOT NULL;`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ALTER COLUMN smtp_password DROP NOT NULL;`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ALTER COLUMN smtp_user DROP NOT NULL;`,
+  );
+  await target.query(
+    `CREATE INDEX IF NOT EXISTS mailboxes_provider_idx ON mailboxes(provider);`,
+  );
+  await target.query(`
       CREATE TABLE IF NOT EXISTS roles (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL UNIQUE,
@@ -200,26 +197,27 @@ export async function runMigrations(clientOrPool?: pg.Client | pg.Pool): Promise
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
     `);
-    await target.query(`CREATE UNIQUE INDEX IF NOT EXISTS roles_name_idx ON roles(name);`);
-    await target.query(`
+  await target.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS roles_name_idx ON roles(name);`,
+  );
+  await target.query(`
       INSERT INTO roles (id, name, description, is_admin, is_system)
       VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'System Administrator (Full access & settings)', true, true)
       ON CONFLICT (name) DO NOTHING;
     `);
-    await target.query(`
+  await target.query(`
       INSERT INTO roles (id, name, description, is_admin, is_system)
       VALUES ('00000000-0000-0000-0000-000000000002', 'HelpDesk', 'General Support HelpDesk', false, false)
       ON CONFLICT (name) DO NOTHING;
     `);
-    await target.query(`UPDATE roles SET is_system = false WHERE name != 'admin';`);
-    await target.query(`
+  await target.query(`
       INSERT INTO roles (name, description, is_admin, is_system)
       SELECT DISTINCT role, 'Department / Role', false, false
       FROM users
       WHERE role NOT IN ('admin')
       ON CONFLICT (name) DO NOTHING;
     `);
-    await target.query(`
+  await target.query(`
       CREATE TABLE IF NOT EXISTS deleted_tickets (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         ticket_id UUID,
@@ -230,26 +228,37 @@ export async function runMigrations(clientOrPool?: pg.Client | pg.Pool): Promise
         deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
     `);
-    await target.query(`CREATE UNIQUE INDEX IF NOT EXISTS deleted_tickets_message_id_idx ON deleted_tickets(message_id);`);
-    await target.query(`ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS target_role TEXT;`);
-    await target.query(`ALTER TABLE ticket_replies ADD COLUMN IF NOT EXISTS author_id UUID;`);
-    await target.query(`ALTER TABLE ticket_replies ADD COLUMN IF NOT EXISTS author_name TEXT;`);
-    await target.query(`CREATE INDEX IF NOT EXISTS replies_author_id_idx ON ticket_replies(author_id);`);
-    await target.query(`
-      INSERT INTO users (name, email, role, is_active)
-      VALUES ('Admin', 'admin@helpdesk.local', 'admin', true)
-      ON CONFLICT (email) DO NOTHING;
-    `);
-
-    // Seed default mailbox from .env only if configured AND mailboxes table is completely empty
-    const env = getEnvConfig();
-    if (env.IMAP_HOST && env.IMAP_USER && !env.IMAP_HOST.includes('example.com')) {
-      const existingMailboxes = await target.query('SELECT COUNT(*) as count FROM mailboxes;');
-      const count = parseInt(existingMailboxes.rows?.[0]?.count || '0', 10);
-      if (count === 0) {
-        const imapPass = env.IMAP_PASSWORD || '';
-        const smtpPass = env.SMTP_PASSWORD || imapPass;
-        await target.query(`
+  await target.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS deleted_tickets_message_id_idx ON deleted_tickets(message_id);`,
+  );
+  await target.query(
+    `ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS target_role TEXT;`,
+  );
+  await target.query(
+    `ALTER TABLE ticket_replies ADD COLUMN IF NOT EXISTS author_id UUID;`,
+  );
+  await target.query(
+    `ALTER TABLE ticket_replies ADD COLUMN IF NOT EXISTS author_name TEXT;`,
+  );
+  await target.query(
+    `CREATE INDEX IF NOT EXISTS replies_author_id_idx ON ticket_replies(author_id);`,
+  );
+  // Seed default mailbox from .env only if configured AND mailboxes table is completely empty
+  const env = getEnvConfig();
+  if (
+    env.IMAP_HOST &&
+    env.IMAP_USER &&
+    !env.IMAP_HOST.includes("example.com")
+  ) {
+    const existingMailboxes = await target.query(
+      "SELECT COUNT(*) as count FROM mailboxes;",
+    );
+    const count = parseInt(existingMailboxes.rows?.[0]?.count || "0", 10);
+    if (count === 0) {
+      const imapPass = env.IMAP_PASSWORD || "";
+      const smtpPass = env.SMTP_PASSWORD || imapPass;
+      await target.query(
+        `
           INSERT INTO mailboxes (
             name, email,
             imap_host, imap_port, imap_user, imap_password, imap_secure,
@@ -258,35 +267,144 @@ export async function runMigrations(clientOrPool?: pg.Client | pg.Pool): Promise
           )
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
           ON CONFLICT (email) DO NOTHING;
-        `, [
-          'Primary Support',
+        `,
+        [
+          "Primary Support",
           env.IMAP_USER,
           env.IMAP_HOST,
           env.IMAP_PORT,
           env.IMAP_USER,
           imapPass,
           env.IMAP_SECURE,
-          env.SMTP_HOST || 'smtp.gmail.com',
+          env.SMTP_HOST || "smtp.gmail.com",
           env.SMTP_PORT || 587,
           env.SMTP_USER || env.IMAP_USER,
           smtpPass,
           env.SMTP_SECURE || false,
-        ]);
+        ],
+      );
+    }
+  }
+  logger.info("Database migrations applied successfully.");
+}
+
+export async function runMigrations(
+  clientOrPool?: pg.Client | pg.Pool,
+): Promise<void> {
+  const env = getEnvConfig();
+  const pool = clientOrPool
+    ? null
+    : new Pool({
+        connectionString: env.MIGRATION_DATABASE_URL || env.DATABASE_URL,
+      });
+  const source = clientOrPool || pool!;
+  const client =
+    "totalCount" in source
+      ? await (source as pg.Pool).connect()
+      : (source as pg.Client);
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(740001)");
+    await client.query(
+      "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+    );
+    const applied = await client.query("SELECT version FROM schema_migrations");
+    const versions = new Set(applied.rows.map((r: any) => Number(r.version)));
+    if (!versions.has(1)) {
+      await initializeLegacy(client);
+      await client.query("INSERT INTO schema_migrations(version) VALUES (1)");
+    }
+    if (!versions.has(2)) {
+      await client.query(HARDENING_SQL);
+      // Preserve names already in use before enforcing catalog membership.
+      await client.query(
+        "INSERT INTO roles(name) SELECT DISTINCT role FROM users ON CONFLICT(name) DO NOTHING",
+      );
+      await client.query(
+        "ALTER TABLE users ADD CONSTRAINT users_role_fk FOREIGN KEY(role) REFERENCES roles(name) ON UPDATE CASCADE ON DELETE RESTRICT",
+      );
+      await client.query(
+        "ALTER TABLE tickets ADD CONSTRAINT tickets_status_check CHECK(status IN ('WAITING','IN_PROGRESS','RESOLVED'))",
+      );
+      await client.query(
+        "ALTER TABLE tickets ADD CONSTRAINT tickets_priority_check CHECK(priority IN ('LOW','MEDIUM','HIGH','CRITICAL'))",
+      );
+      await client.query(
+        "ALTER TABLE ticket_replies ADD CONSTRAINT replies_sender_check CHECK(sender_type IN ('CUSTOMER','EMPLOYEE'))",
+      );
+      await client.query(
+        "ALTER TABLE mailboxes ADD CONSTRAINT mailbox_provider_check CHECK(provider IN ('imap','graph'))",
+      );
+      const result = await client.query(
+        "SELECT id, target_role, imap_password, smtp_password, ms_client_secret FROM mailboxes",
+      );
+      for (const mb of result.rows) {
+        await client.query(
+          "UPDATE mailboxes SET imap_password=$1,smtp_password=$2,ms_client_secret=$3 WHERE id=$4",
+          [
+            encryptSecret(mb.imap_password) || "",
+            encryptSecret(mb.smtp_password) || "",
+            encryptSecret(mb.ms_client_secret),
+            mb.id,
+          ],
+        );
+        for (const role of (mb.target_role || "")
+          .split(",")
+          .map((r: string) => r.trim())
+          .filter(Boolean)) {
+          await client.query(
+            "INSERT INTO roles(name) VALUES ($1) ON CONFLICT(name) DO NOTHING",
+            [role],
+          );
+          await client.query(
+            "INSERT INTO mailbox_roles(mailbox_id,role_id) SELECT $1,id FROM roles WHERE name=$2 ON CONFLICT DO NOTHING",
+            [mb.id, role],
+          );
+        }
       }
+      for (const col of [
+        "imap_host",
+        "imap_user",
+        "imap_password",
+        "smtp_host",
+        "smtp_user",
+        "smtp_password",
+      ]) {
+        await client.query(
+          "UPDATE mailboxes SET " + col + "='' WHERE " + col + " IS NULL",
+        );
+        await client.query(
+          "ALTER TABLE mailboxes ALTER COLUMN " + col + " SET NOT NULL",
+        );
+      }
+      await client.query("INSERT INTO schema_migrations(version) VALUES (2)");
     }
-    logger.info('Database migrations applied successfully.');
+    if (!versions.has(3)) {
+      // Some version-2 installations predate request_hash. Updating the old
+      // migration cannot repair them because it has already been recorded.
+      await client.query(
+        "ALTER TABLE ticket_replies ADD COLUMN IF NOT EXISTS request_hash TEXT",
+      );
+      await client.query("INSERT INTO schema_migrations(version) VALUES (3)");
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   } finally {
-    if (poolToClose) {
-      await poolToClose.end();
-    }
+    if ("release" in client) (client as pg.PoolClient).release();
+    if (pool) await pool.end();
   }
 }
 
-if (process.argv[1]?.endsWith('migrate.ts') || process.argv[1]?.endsWith('migrate.js')) {
+if (
+  process.argv[1]?.endsWith("migrate.ts") ||
+  process.argv[1]?.endsWith("migrate.js")
+) {
   runMigrations()
     .then(() => process.exit(0))
     .catch((err) => {
-      logger.error({ err }, 'Migration failed');
+      logger.error({ err }, "Migration failed");
       process.exit(1);
     });
 }

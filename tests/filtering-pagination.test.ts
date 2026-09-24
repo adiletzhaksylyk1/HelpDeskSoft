@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createTestDb, TestDbInstance } from './test-db.js';
-import { buildApp } from '../backend/src/app.js';
-import { UsersRepository } from '../backend/src/modules/users/users.repository.js';
-import { TicketsRepository } from '../backend/src/modules/tickets/tickets.repository.js';
+import { testSession } from "./helpers.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createTestDb, TestDbInstance } from "./test-db.js";
+import { buildApp } from "../backend/src/app.js";
+import { UsersRepository } from "../backend/src/modules/users/users.repository.js";
+import { TicketsRepository } from "../backend/src/modules/tickets/tickets.repository.js";
 
-describe('Ticket Filtering & Pagination', () => {
+describe("Ticket Filtering & Pagination", () => {
   let testDb: TestDbInstance;
   let app: ReturnType<typeof buildApp>;
   let usersRepo: UsersRepository;
@@ -23,97 +24,113 @@ describe('Ticket Filtering & Pagination', () => {
     await testDb.cleanup();
   });
 
-  it('filters tickets by status, priority, and assignee', async () => {
-    const userA = await usersRepo.create({ name: 'Agent A', email: 'agentA@example.com', isActive: true });
-    const userB = await usersRepo.create({ name: 'Agent B', email: 'agentB@example.com', isActive: true });
+  it("filters tickets by status, priority, and assignee", async () => {
+    const userA = await usersRepo.create({
+      name: "Agent A",
+      email: "agentA@example.com",
+      isActive: true,
+    });
+    const userB = await usersRepo.create({
+      name: "Agent B",
+      email: "agentB@example.com",
+      isActive: true,
+    });
 
     // Seed 4 tickets with varied attributes
     await ticketsRepo.create({
-      messageId: '<m1@test.com>',
-      senderEmail: 'c1@test.com',
-      subject: 'T1',
-      body: 'B1',
-      status: 'WAITING',
-      priority: 'LOW',
+      messageId: "<m1@test.com>",
+      senderEmail: "c1@test.com",
+      subject: "T1",
+      body: "B1",
+      status: "WAITING",
+      priority: "LOW",
       assigneeId: userA.id,
     });
     await ticketsRepo.create({
-      messageId: '<m2@test.com>',
-      senderEmail: 'c2@test.com',
-      subject: 'T2',
-      body: 'B2',
-      status: 'IN_PROGRESS',
-      priority: 'HIGH',
+      messageId: "<m2@test.com>",
+      senderEmail: "c2@test.com",
+      subject: "T2",
+      body: "B2",
+      status: "IN_PROGRESS",
+      priority: "HIGH",
       assigneeId: userA.id,
     });
     await ticketsRepo.create({
-      messageId: '<m3@test.com>',
-      senderEmail: 'c3@test.com',
-      subject: 'T3',
-      body: 'B3',
-      status: 'RESOLVED',
-      priority: 'HIGH',
+      messageId: "<m3@test.com>",
+      senderEmail: "c3@test.com",
+      subject: "T3",
+      body: "B3",
+      status: "RESOLVED",
+      priority: "HIGH",
       assigneeId: userB.id,
     });
     await ticketsRepo.create({
-      messageId: '<m4@test.com>',
-      senderEmail: 'c4@test.com',
-      subject: 'T4',
-      body: 'B4',
-      status: 'WAITING',
-      priority: 'CRITICAL',
+      messageId: "<m4@test.com>",
+      senderEmail: "c4@test.com",
+      subject: "T4",
+      body: "B4",
+      status: "WAITING",
+      priority: "CRITICAL",
       assigneeId: userB.id,
     });
 
-    const authHeaders = { authorization: `Bearer ${app.jwt.sign({ id: userA.id, email: userA.email, role: 'employee' })}` };
+    const authHeaders = {
+      authorization: `Bearer ${(await testSession(app, testDb)).token}`,
+    };
 
     // Filter by status=WAITING
     const waitingRes = await app.inject({
-      method: 'GET',
-      url: '/api/tickets?status=WAITING',
+      method: "GET",
+      url: "/api/tickets?status=WAITING",
       headers: authHeaders,
     });
     expect(waitingRes.statusCode).toBe(200);
     const waitingBody = waitingRes.json();
     expect(waitingBody.total).toBe(2);
-    expect(waitingBody.data.every((t: any) => t.status === 'WAITING')).toBe(true);
+    expect(waitingBody.data.every((t: any) => t.status === "WAITING")).toBe(
+      true,
+    );
 
     // Filter by priority=HIGH
     const highRes = await app.inject({
-      method: 'GET',
-      url: '/api/tickets?priority=HIGH',
+      method: "GET",
+      url: "/api/tickets?priority=HIGH",
       headers: authHeaders,
     });
     expect(highRes.statusCode).toBe(200);
     const highBody = highRes.json();
     expect(highBody.total).toBe(2);
-    expect(highBody.data.every((t: any) => t.priority === 'HIGH')).toBe(true);
+    expect(highBody.data.every((t: any) => t.priority === "HIGH")).toBe(true);
 
     // Filter by assignee=userA.id
     const userARes = await app.inject({
-      method: 'GET',
+      method: "GET",
       url: `/api/tickets?assignee=${userA.id}`,
       headers: authHeaders,
     });
     expect(userARes.statusCode).toBe(200);
     const userABody = userARes.json();
     expect(userABody.total).toBe(2);
-    expect(userABody.data.every((t: any) => t.assigneeId === userA.id)).toBe(true);
+    expect(userABody.data.every((t: any) => t.assigneeId === userA.id)).toBe(
+      true,
+    );
 
     // Combined filter: status=IN_PROGRESS and priority=HIGH
     const combinedRes = await app.inject({
-      method: 'GET',
-      url: '/api/tickets?status=IN_PROGRESS&priority=HIGH',
+      method: "GET",
+      url: "/api/tickets?status=IN_PROGRESS&priority=HIGH",
       headers: authHeaders,
     });
     expect(combinedRes.statusCode).toBe(200);
     const combinedBody = combinedRes.json();
     expect(combinedBody.total).toBe(1);
-    expect(combinedBody.data[0].subject).toBe('T2');
+    expect(combinedBody.data[0].subject).toBe("T2");
   });
 
-  it('correctly applies pagination limits and page offsets', async () => {
-    const authHeaders = { authorization: `Bearer ${app.jwt.sign({ id: '00000000-0000-0000-0000-000000000001', email: 'staff@example.com', role: 'employee' })}` };
+  it("correctly applies pagination limits and page offsets", async () => {
+    const authHeaders = {
+      authorization: `Bearer ${(await testSession(app, testDb)).token}`,
+    };
 
     // Seed 15 tickets
     for (let i = 1; i <= 15; i++) {
@@ -122,15 +139,15 @@ describe('Ticket Filtering & Pagination', () => {
         senderEmail: `user${i}@test.com`,
         subject: `Ticket #${i}`,
         body: `Description #${i}`,
-        status: 'WAITING',
-        priority: 'MEDIUM',
+        status: "WAITING",
+        priority: "MEDIUM",
       });
     }
 
     // Page 1 with limit 5
     const page1Res = await app.inject({
-      method: 'GET',
-      url: '/api/tickets?page=1&limit=5',
+      method: "GET",
+      url: "/api/tickets?page=1&limit=5",
       headers: authHeaders,
     });
     expect(page1Res.statusCode).toBe(200);
@@ -143,8 +160,8 @@ describe('Ticket Filtering & Pagination', () => {
 
     // Page 2 with limit 5
     const page2Res = await app.inject({
-      method: 'GET',
-      url: '/api/tickets?page=2&limit=5',
+      method: "GET",
+      url: "/api/tickets?page=2&limit=5",
       headers: authHeaders,
     });
     expect(page2Res.statusCode).toBe(200);
@@ -161,8 +178,8 @@ describe('Ticket Filtering & Pagination', () => {
 
     // Page 3 with limit 5
     const page3Res = await app.inject({
-      method: 'GET',
-      url: '/api/tickets?page=3&limit=5',
+      method: "GET",
+      url: "/api/tickets?page=3&limit=5",
       headers: authHeaders,
     });
     expect(page3Res.statusCode).toBe(200);

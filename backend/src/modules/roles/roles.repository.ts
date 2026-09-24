@@ -1,6 +1,8 @@
-import { eq, sql, count, desc } from 'drizzle-orm';
-import type { AppDatabase } from '../../db/index.js';
-import { roles, users, type Role, type NewRole } from '../../db/schema.js';
+import { eq, sql, count, desc } from "drizzle-orm";
+import type { AppDatabase } from "../../db/index.js";
+import { roles, users, mailboxes, type Role } from "../../db/schema.js";
+import { withDbLock } from "../../db/lock.js";
+import { ValidationError } from "../../shared/errors.js";
 
 export interface RoleWithStats extends Role {
   userCount: number;
@@ -30,7 +32,7 @@ export class RolesRepository {
         roles.isAdmin,
         roles.isSystem,
         roles.createdAt,
-        roles.updatedAt
+        roles.updatedAt,
       )
       .orderBy(desc(roles.isSystem), roles.name);
 
@@ -47,7 +49,11 @@ export class RolesRepository {
   }
 
   async findById(id: string): Promise<Role | null> {
-    const [role] = await this.db.select().from(roles).where(eq(roles.id, id)).limit(1);
+    const [role] = await this.db
+      .select()
+      .from(roles)
+      .where(eq(roles.id, id))
+      .limit(1);
     return role || null;
   }
 
@@ -57,13 +63,17 @@ export class RolesRepository {
     return all.find((r) => r.name.trim().toLowerCase() === trimmed) || null;
   }
 
-  async create(data: { name: string; description?: string; isAdmin?: boolean }): Promise<Role> {
+  async create(data: {
+    name: string;
+    description?: string;
+    isAdmin?: boolean;
+  }): Promise<Role> {
     const trimmedName = data.name.trim();
     const [created] = await this.db
       .insert(roles)
       .values({
         name: trimmedName,
-        description: data.description?.trim() || '',
+        description: data.description?.trim() || "",
         isAdmin: Boolean(data.isAdmin),
         isSystem: false,
       })
@@ -72,39 +82,61 @@ export class RolesRepository {
   }
 
   async delete(id: string, reassignUsers: boolean = false): Promise<boolean> {
-    const role = await this.findById(id);
-    if (!role) return false;
-    if (role.name === 'admin' || (role.isSystem && role.name === 'admin')) {
-      throw new Error(`Cannot delete built-in system role 'admin'`);
-    }
-
-    const assigned = await this.db
-      .select({ count: count(users.id) })
-      .from(users)
-      .where(eq(users.role, role.name));
-    const userCount = Number(assigned[0]?.count || 0);
-
-    if (userCount > 0 && !reassignUsers) {
-      throw new Error(`Cannot delete role '${role.name}' because ${userCount} staff member(s) are assigned to it. Reassign staff first or confirm deletion.`);
-    }
-
-    if (userCount > 0 && reassignUsers) {
-      const remainingRoles = await this.db
+    return withDbLock(this.db, 740003, async (tx) => {
+      const [role] = await tx.select().from(roles).where(eq(roles.id, id));
+      if (!role) return false;
+      if (role.isSystem || role.isAdmin || role.name === "HelpDesk")
+        throw new ValidationError(
+          "System and administrator roles cannot be deleted",
+        );
+      const assigned = await tx
+        .select()
+        .from(users)
+        .where(eq(users.role, role.name));
+      const affected = (await tx.select().from(mailboxes)).filter((m) =>
+        (m.targetRole || "")
+          .split(",")
+          .map((s) => s.trim())
+          .includes(role.name),
+      );
+      if ((assigned.length || affected.length) && !reassignUsers)
+        throw new ValidationError(
+          "Role is used by staff or mailbox routing. Confirm reassignment to HelpDesk.",
+        );
+      const [fallback] = await tx
         .select()
         .from(roles)
-        .where(eq(roles.isAdmin, false));
-      const fallbackRole = remainingRoles.find((r) => r.id !== id)?.name || 'HelpDesk';
-      await this.db
+        .where(eq(roles.name, "HelpDesk"));
+      if (!fallback)
+        throw new ValidationError("HelpDesk fallback department is missing");
+      await tx
         .update(users)
-        .set({ role: fallbackRole })
+        .set({
+          role: fallback.name,
+          sessionVersion: sql`${users.sessionVersion} + 1`,
+        })
         .where(eq(users.role, role.name));
-    }
-
-    const deleted = await this.db
-      .delete(roles)
-      .where(eq(roles.id, id))
-      .returning({ id: roles.id });
-
-    return deleted.length > 0;
+      for (const mailbox of affected) {
+        const names = [
+          ...new Set(
+            (mailbox.targetRole || "")
+              .split(",")
+              .map((s) => (s.trim() === role.name ? fallback.name : s.trim()))
+              .filter(Boolean),
+          ),
+        ];
+        await tx
+          .update(mailboxes)
+          .set({ targetRole: names.join(",") })
+          .where(eq(mailboxes.id, mailbox.id));
+        await tx.execute(
+          sql`INSERT INTO mailbox_roles(mailbox_id,role_id) VALUES (${mailbox.id},${fallback.id}) ON CONFLICT DO NOTHING`,
+        );
+      }
+      await tx.execute(sql`DELETE FROM mailbox_roles WHERE role_id=${role.id}`);
+      return (
+        (await tx.delete(roles).where(eq(roles.id, id)).returning()).length > 0
+      );
+    });
   }
 }

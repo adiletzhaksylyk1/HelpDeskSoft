@@ -1,8 +1,8 @@
-import { drizzle, NodePgDatabase } from 'drizzle-orm/node-postgres';
-import pg from 'pg';
-import * as schema from './schema.js';
-import { getEnvConfig } from '../config/env.js';
-import { logger } from '../shared/logger.js';
+import { drizzle, NodePgDatabase } from "drizzle-orm/node-postgres";
+import pg from "pg";
+import * as schema from "./schema.js";
+import { getEnvConfig } from "../config/env.js";
+import { logger } from "../shared/logger.js";
 
 const { Pool } = pg;
 
@@ -25,10 +25,13 @@ export function getDb(): AppDatabase {
     connectionString: env.DATABASE_URL,
     max: 10,
     idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+    statement_timeout: 60000,
+    query_timeout: 65000,
   });
 
-  defaultPool.on('error', (err) => {
-    logger.error({ err }, 'Unexpected PostgreSQL pool error');
+  defaultPool.on("error", (err) => {
+    logger.error({ err }, "Unexpected PostgreSQL pool error");
   });
 
   defaultDb = drizzle(defaultPool, { schema });
