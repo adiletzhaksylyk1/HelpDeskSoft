@@ -4,11 +4,11 @@
 header {
   background: var(--surface);
   border-bottom: 1px solid var(--surface-border);
-  padding: 0 20px;
+  padding: 0 20px 0 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 58px;
+  height: 76px;
   flex-shrink: 0;
   z-index: 10;
 }
@@ -17,6 +17,11 @@ header {
   display: flex;
   align-items: center;
   gap: 12px;
+  width: 270px;
+  height: 100%;
+  padding-left: 20px;
+  border-right: 1px solid var(--surface-border);
+  flex-shrink: 0;
 }
 
 .brand-link {
@@ -50,33 +55,21 @@ body.dark-theme .brand-link:hover {
 }
 
 .aitu-logo-img {
-  height: 36px;
+  height: 48px;
   width: auto;
   display: block;
 }
 
 .brand-divider {
-  width: 1px;
-  height: 22px;
-  background: var(--surface-border);
-  margin: 0 4px;
+  display: none;
 }
 
 .brand-title {
-  font-weight: 600;
-  font-size: 14.5px;
-  color: var(--text);
-  letter-spacing: -0.01em;
+  display: none;
 }
 
 .brand-badge {
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--success-subtle);
-  color: var(--success);
-  padding: 2px 8px;
-  border-radius: 6px;
-  border: 1px solid rgba(5, 150, 105, 0.2);
+  display: none;
 }
 
 .header-actions {
@@ -107,7 +100,7 @@ body.dark-theme .brand-link:hover {
 .app-body {
   display: flex;
   flex: 1;
-  height: calc(100vh - 58px);
+  height: calc(100vh - 76px);
   width: 100%;
   min-width: 0;
   overflow: hidden;
@@ -116,13 +109,13 @@ body.dark-theme .brand-link:hover {
 
 /* Sidebar (Astana IT University Navigation) */
 .sidebar {
-  width: 240px;
+  width: 270px;
   background: var(--surface);
   border-right: 1px solid var(--surface-border);
-  padding: 12px 10px;
+  padding: 16px 10px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   flex-shrink: 0;
   overflow-y: auto;
   -webkit-user-select: none;
@@ -150,8 +143,9 @@ body.dark-theme .brand-link:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 36px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   color: var(--text);
   transition:
@@ -171,7 +165,7 @@ body.dark-theme .brand-link:hover {
 }
 
 .sidebar-group-icon {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   flex-shrink: 0;
   transition: color 0.15s;
 }
@@ -182,7 +176,7 @@ body.dark-theme .brand-link:hover {
 
 .sidebar-group-title {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -219,25 +213,27 @@ body.dark-theme .brand-link:hover {
 .sidebar-tree {
   margin-left: 14px;
   padding-left: 8px;
-  border-left: 1px solid var(--surface-border-subtle);
+  border-left: 1px solid var(--surface-border);
   margin-top: 2px;
   margin-bottom: 4px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 /* Sub-items in Navigation (MYDU soft pill) */
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 34px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   transition: all 0.15s ease;
 }
 
@@ -247,14 +243,52 @@ body.dark-theme .brand-link:hover {
 }
 
 .nav-item.active {
-  background: var(--primary-subtle);
+  margin-left: -22px;
+  padding-left: 32px;
+  background: #edf4ff;
   color: var(--primary);
-  font-weight: inherit;
+  font-weight: 500;
+}
+
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 13px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+
+#filter-all.active,
+#filter-p-all.active,
+#filter-mb-all.active {
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+#filter-all.active::before,
+#filter-p-all.active::before,
+#filter-mb-all.active::before {
+  display: none;
 }
 
 body.dark-theme .nav-item.active {
-  background: rgba(0, 102, 255, 0.18);
-  color: #38bdf8;
+  background: rgba(129, 161, 190, 0.1);
+  color: var(--primary);
+}
+
+body.dark-theme .nav-item.active::before {
+  background: #7898B6;
+}
+
+body.dark-theme #filter-all.active,
+body.dark-theme #filter-p-all.active,
+body.dark-theme #filter-mb-all.active {
+  background: transparent;
+  color: var(--text-secondary);
 }
 
 .counter-pill {
@@ -277,7 +311,7 @@ body.dark-theme .nav-item.active {
 }
 
 body.dark-theme .pill-primary {
-  color: #38bdf8;
+  color: var(--primary);
 }
 
 .pill-warning {
@@ -285,7 +319,12 @@ body.dark-theme .pill-primary {
 }
 
 body.dark-theme .pill-warning {
-  color: #fbbf24;
+  color: var(--warning);
+}
+
+body.dark-theme .nav-item-admin {
+  color: var(--text-secondary);
+  font-weight: 400;
 }
 
 .nav-item-admin {
@@ -328,13 +367,13 @@ body.dark-theme .pill-warning {
 }
 
 .nav-item.active .counter-pill {
-  background: var(--primary);
-  color: white;
+  background: rgba(0, 102, 255, 0.08);
+  color: var(--primary);
 }
 
 body.dark-theme .nav-item.active .counter-pill {
-  background: #0066ff;
-  color: white;
+  background: rgba(129, 161, 190, 0.12);
+  color: var(--primary);
 }
 
 .nav-item.active .counter-pill.pill-subtle {
@@ -349,7 +388,7 @@ body.dark-theme .nav-item.active .counter-pill {
 
 body.dark-theme .nav-item.active .counter-pill.pill-primary,
 body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-primary {
-  color: #38bdf8;
+  color: var(--primary);
 }
 
 .nav-item.active .counter-pill.pill-warning,
@@ -359,7 +398,7 @@ body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-primary {
 
 body.dark-theme .nav-item.active .counter-pill.pill-warning,
 body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-warning {
-  color: #fbbf24;
+  color: var(--warning);
 }
 
 /* Split Pane Columns */
@@ -459,6 +498,15 @@ body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-warning {
 
 /* Tablet (768px - 1023px) */
 @media (max-width: 1023px) {
+  header {
+    height: 58px;
+    padding: 0 20px;
+  }
+
+  .app-body {
+    height: calc(100vh - 58px);
+  }
+
   .hamburger-btn {
     display: inline-flex;
   }
@@ -466,6 +514,17 @@ body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-warning {
   .brand-divider,
   .brand-badge {
     display: none;
+  }
+
+  .brand {
+    width: auto;
+    height: auto;
+    padding-left: 0;
+    border-right: 0;
+  }
+
+  .aitu-logo-img {
+    height: 36px;
   }
 
   /* Off-canvas sidebar */
@@ -535,6 +594,10 @@ body.dark-theme .nav-item.active .counter-pill.pill-subtle.pill-warning {
     height: 54px;
     gap: 6px;
     min-width: 0;
+  }
+
+  .app-body {
+    height: calc(100vh - 54px);
   }
 
   .brand {

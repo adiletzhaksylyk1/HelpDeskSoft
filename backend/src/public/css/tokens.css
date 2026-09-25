@@ -15,6 +15,8 @@
   --primary: #0066FF;
   --primary-hover: #0052CC;
   --primary-subtle: #EBF5FF;
+  --primary-fill: #0066FF;
+  --primary-fill-hover: #0052CC;
   --aitu-cyan: #0284C7;
   --aitu-dark: #0F172A;
 
@@ -36,29 +38,30 @@ body.dark-theme {
   --surface-hover: #2B2D34;
   --surface-active: #1E2D4A;
 
-  --text: #F4F4F6;
-  --text-secondary: #D4D4D8;
-  --text-muted: #A1A1AA;
+  --text: #DCE1E8;
+  --text-secondary: #B8C1CC;
+  --text-muted: #909CAA;
   --text-subtle: #71717A;
 
-  --primary: #0066FF;
-  --primary-hover: #2563EB;
-  --primary-subtle: rgba(0, 102, 255, 0.16);
+  --primary: #9CB7D0;
+  --primary-hover: #B3C9DD;
+  --primary-subtle: rgba(129, 161, 190, 0.12);
+  --primary-fill: #42678D;
+  --primary-fill-hover: #50779E;
 
   --aitu-dark: #F4F4F6;
-  --aitu-cyan: #38BDF8;
-  --aitu-cyan-subtle: rgba(56, 189, 248, 0.15);
+  --aitu-cyan: #9CB7D0;
+  --aitu-cyan-subtle: rgba(129, 161, 190, 0.12);
 
-  --success: #4ADE80;
+  --success: #91BD9D;
   --success-subtle: rgba(34, 197, 94, 0.14);
 
-  --warning: #FBBF24;
+  --warning: #D5B984;
   --warning-subtle: rgba(245, 158, 11, 0.14);
 
-  --danger: #F87171;
+  --danger: #D99191;
   --danger-subtle: rgba(239, 68, 68, 0.14);
 
-  --purple: #818CF8;
-  --purple-subtle: rgba(99, 102, 241, 0.14);
+  --purple: #B1A8C7;
+  --purple-subtle: rgba(155, 142, 183, 0.12);
 }
-

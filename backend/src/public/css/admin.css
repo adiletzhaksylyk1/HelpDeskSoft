@@ -173,9 +173,9 @@ body.dark-theme .preset-selector-group {
 }
 
 body.dark-theme .provider-btn.active {
-  border-color: #0066FF;
-  background: rgba(0, 102, 255, 0.18);
-  color: #38BDF8;
+  border-color: #7898B6;
+  background: var(--primary-subtle);
+  color: var(--primary);
 }
 
 /* Test Connection Bar */
@@ -217,5 +217,3 @@ body.dark-theme .provider-btn.active {
   font-size: 11px;
   border: 1px solid var(--surface-border);
 }
-
-
