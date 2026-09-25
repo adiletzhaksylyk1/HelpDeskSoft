@@ -4,6 +4,8 @@ import { UsersRepository } from '../backend/src/modules/users/users.repository.j
 import { TicketsRepository } from '../backend/src/modules/tickets/tickets.repository.js';
 import { TicketsService } from '../backend/src/modules/tickets/tickets.service.js';
 import { ImapWorker } from '../backend/src/modules/email/imap.worker.js';
+import { tickets } from '../backend/src/db/schema.js';
+import { eq } from 'drizzle-orm';
 
 
 describe('Inbound Email Worker & Deduplication', () => {
@@ -79,6 +81,81 @@ My account got locked after 3 attempts.
     expect(paginated.total).toBe(1);
   });
 
+  it('keeps a headerless Re: reply in its original ticket and updates the queue', async () => {
+    await usersRepo.create({ name: 'Agent', email: 'agent@example.com', isActive: true });
+    const original = await imapWorker.processIncomingMail(`From: student@example.kz
+To: support@example.kz
+Subject: User not found
+Message-ID: <user-not-found-1@example.kz>
+
+I cannot sign in.`);
+    const followUp = await imapWorker.processIncomingMail(`From: student@example.kz
+To: support@example.kz
+Subject: Re: User not found
+Message-ID: <user-not-found-2@example.kz>
+
+Everything works now, thank you.`);
+
+    expect(followUp.ticketId).toBe(original.ticketId);
+    const thread = await ticketsRepo.findById(original.ticketId!);
+    expect(thread?.subject).toBe('User not found');
+    expect(thread?.replies?.map((reply) => reply.body)).toEqual([
+      'Everything works now, thank you.',
+    ]);
+    const list = await ticketsRepo.findMany();
+    expect(list.total).toBe(1);
+    expect(list.data[0].latestReplyBody).toBe('Everything works now, thank you.');
+    expect(list.data[0].latestReplySenderType).toBe('CUSTOMER');
+    expect(list.data[0].replyCount).toBe(1);
+    expect((await imapWorker.processIncomingMail(`From: student@example.kz
+To: support@example.kz
+Subject: Re: User not found
+Message-ID: <user-not-found-2@example.kz>
+
+Everything works now, thank you.`)).created).toBe(false);
+  });
+
+  it('does not infer a thread from a subject shared by multiple tickets', async () => {
+    await usersRepo.create({ name: 'Agent', email: 'agent@example.com', isActive: true });
+    for (const id of [1, 2]) {
+      await imapWorker.processIncomingMail(`From: student@example.kz
+To: support@example.kz
+Subject: User not found
+Message-ID: <separate-${id}@example.kz>
+
+Request ${id}`);
+    }
+    const followUp = await imapWorker.processIncomingMail(`From: student@example.kz
+To: support@example.kz
+Subject: Re: User not found
+Message-ID: <ambiguous@example.kz>
+
+Follow up`);
+    expect(followUp.created).toBe(true);
+    expect((await ticketsRepo.findMany()).total).toBe(3);
+  });
+
+  it('reconciles an existing Re: ticket into the original conversation', async () => {
+    await usersRepo.create({ name: 'Agent', email: 'agent@example.com', isActive: true });
+    const root = await ticketsRepo.create({
+      senderEmail: 'student@example.kz', subject: 'User not found', body: 'Please help',
+      messageId: '<root-reconcile@example.kz>',
+    });
+    const duplicate = await ticketsRepo.create({
+      senderEmail: 'student@example.kz', subject: 'Re: User not found', body: 'Thank you',
+      messageId: '<reply-reconcile@example.kz>',
+    });
+    await testDb.db.update(tickets).set({ createdAt: new Date(root.createdAt.getTime() + 1000) })
+      .where(eq(tickets.id, duplicate.id));
+
+    expect(await ticketsRepo.reconcileReplyTickets()).toBe(1);
+    expect(await ticketsRepo.reconcileReplyTickets()).toBe(0);
+    expect((await ticketsRepo.findMany()).total).toBe(1);
+    expect((await ticketsRepo.findById(root.id))?.replies?.[0].messageId)
+      .toBe('<reply-reconcile@example.kz>');
+    expect((await ticketsRepo.findReplyByMessageId(duplicate.messageId))?.ticketId).toBe(root.id);
+  });
+
   it('does NOT recreate a ticket if it was deleted by the user', async () => {
     await usersRepo.create({ name: 'Agent', email: 'agent@example.com', isActive: true });
 
@@ -152,4 +229,3 @@ Never mind, I found my key in my jacket.
     expect(paginated.total).toBe(0);
   });
 });
-

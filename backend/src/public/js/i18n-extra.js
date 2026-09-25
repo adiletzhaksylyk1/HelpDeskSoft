@@ -1,5 +1,7 @@
 const additionalTranslations = {
   EN: {
+    reply_from_support: "Support",
+    reply_from_customer: "Customer",
     setup_password: "Set password",
     auth_new_password_placeholder: "Create a password",
     ticket_not_found: "Ticket not found",
@@ -40,6 +42,8 @@ const additionalTranslations = {
       "Up to 20 files; 10 MiB each and 25 MiB total by default.",
   },
   RU: {
+    reply_from_support: "Поддержка",
+    reply_from_customer: "Клиент",
     setup_password: "Установить пароль",
     auth_new_password_placeholder: "Придумайте пароль",
     ticket_not_found: "Заявка не найдена",
@@ -79,6 +83,8 @@ const additionalTranslations = {
       "До 20 файлов; по умолчанию 10 МиБ на файл и 25 МиБ всего.",
   },
   KZ: {
+    reply_from_support: "Қолдау қызметі",
+    reply_from_customer: "Клиент",
     setup_password: "Құпиясөзді орнату",
     auth_new_password_placeholder: "Құпиясөз ойлап табыңыз",
     ticket_not_found: "Өтінім табылмады",

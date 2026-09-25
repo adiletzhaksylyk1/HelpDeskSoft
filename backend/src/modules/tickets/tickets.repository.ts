@@ -2,11 +2,12 @@ import { withDbLock } from "../../db/lock.js";
 import { ConflictError, ValidationError } from "../../shared/errors.js";
 import { or, ilike, getTableColumns } from "drizzle-orm";
 import crypto from "node:crypto";
-import { eq, and, sql, desc, count, isNull } from "drizzle-orm";
+import { eq, and, sql, desc, count, isNull, gte, inArray } from "drizzle-orm";
 import type { AppDatabase } from "../../db/index.js";
 import {
   tickets,
   ticketReplies,
+  ticketAttachments,
   users,
   deletedTickets,
   mailboxes,
@@ -51,10 +52,20 @@ export interface TicketWithDetails extends Ticket {
   } | null;
   replies?: TicketReply[];
   replyCount?: number;
+  latestReplyBody?: string | null;
+  latestReplySenderType?: string | null;
 }
 
 export class TicketsRepository {
   constructor(readonly db: AppDatabase) {}
+
+  private normalizeSubject(value: string): string {
+    return value.trim().replace(/^(?:(?:re|aw|sv)\s*:\s*)+/i, "").trim().toLowerCase();
+  }
+
+  private isReplySubject(value: string): boolean {
+    return /^(?:(?:re|aw|sv)\s*:\s*)+/i.test(value.trim());
+  }
 
   async findByMessageId(messageId: string): Promise<Ticket | null> {
     const [ticket] = await this.db
@@ -167,14 +178,37 @@ export class TicketsRepository {
       .from(tickets)
       .leftJoin(users, eq(tickets.assigneeId, users.id))
       .where(whereClause)
-      .orderBy(desc(tickets.createdAt), desc(tickets.id))
+      .orderBy(desc(tickets.updatedAt), desc(tickets.id))
       .limit(limit)
       .offset(offset);
 
+    const ids = items.map(({ ticket }) => ticket.id);
+    const counts = ids.length
+      ? await this.db
+          .select({ ticketId: ticketReplies.ticketId, total: count() })
+          .from(ticketReplies)
+          .where(inArray(ticketReplies.ticketId, ids))
+          .groupBy(ticketReplies.ticketId)
+      : [];
+    const replyCounts = new Map(counts.map((row) => [row.ticketId, Number(row.total)]));
+    const latestReplies = await Promise.all(
+      ids.map(async (id) => {
+        const [reply] = await this.db
+          .select({ body: ticketReplies.body, senderType: ticketReplies.senderType })
+          .from(ticketReplies)
+          .where(eq(ticketReplies.ticketId, id))
+          .orderBy(desc(ticketReplies.createdAt), desc(ticketReplies.id))
+          .limit(1);
+        return reply || null;
+      }),
+    );
     const formattedData: TicketWithDetails[] = items.map(
-      ({ ticket, assignee }) => ({
+      ({ ticket, assignee }, index) => ({
         ...ticket,
         assignee: assignee?.id ? assignee : null,
+        replyCount: replyCounts.get(ticket.id) || 0,
+        latestReplyBody: latestReplies[index]?.body.slice(0, 240) || null,
+        latestReplySenderType: latestReplies[index]?.senderType || null,
       }),
     );
 
@@ -480,6 +514,81 @@ export class TicketsRepository {
       }
     }
     return null;
+  }
+
+  async findThreadByReplySubject(
+    senderEmail: string,
+    mailboxId: string | undefined,
+    subject: string,
+  ): Promise<Ticket | null> {
+    // Subject is only a fallback when a mail client has dropped thread headers.
+    // Never attach a new, unprefixed request to an older ticket by title alone.
+    if (!this.isReplySubject(subject)) return null;
+    const topic = this.normalizeSubject(subject);
+    if (!topic) return null;
+    const candidates = await this.db
+      .select()
+      .from(tickets)
+      .where(
+        and(
+          sql`lower(${tickets.senderEmail}) = ${senderEmail.toLowerCase()}`,
+          mailboxId ? eq(tickets.mailboxId, mailboxId) : isNull(tickets.mailboxId),
+          gte(tickets.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+        ),
+      )
+      .orderBy(desc(tickets.createdAt))
+      .limit(100);
+    const matches = candidates.filter((candidate) => this.normalizeSubject(candidate.subject) === topic);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  async reconcileReplyTickets(): Promise<number> {
+    return withDbLock(this.db, 740010, async (tx) => {
+      const repo = new TicketsRepository(tx);
+      const recent = await tx
+        .select()
+        .from(tickets)
+        .where(gte(tickets.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)))
+        .orderBy(desc(tickets.createdAt), desc(tickets.id))
+        .limit(1000);
+      recent.reverse();
+      let merged = 0;
+      for (const source of recent) {
+        if (!repo.isReplySubject(source.subject)) continue;
+        const matches = recent.filter((candidate) =>
+          candidate.id !== source.id &&
+          candidate.createdAt < source.createdAt &&
+          !repo.isReplySubject(candidate.subject) &&
+          candidate.senderEmail.toLowerCase() === source.senderEmail.toLowerCase() &&
+          candidate.mailboxId === source.mailboxId &&
+          repo.normalizeSubject(candidate.subject) === repo.normalizeSubject(source.subject),
+        );
+        if (matches.length !== 1) continue;
+        const root = matches[0];
+        const [movedRoot] = await tx.insert(ticketReplies).values({
+          ticketId: root.id,
+          body: source.body,
+          senderType: "CUSTOMER",
+          messageId: source.messageId,
+          providerMessageId: source.providerMessageId,
+          deliveryStatus: "received",
+          createdAt: source.createdAt,
+        }).returning();
+        await tx.update(ticketAttachments)
+          .set({ ticketId: root.id, replyId: movedRoot.id })
+          .where(and(eq(ticketAttachments.ticketId, source.id), isNull(ticketAttachments.replyId)));
+        await tx.update(ticketAttachments)
+          .set({ ticketId: root.id })
+          .where(eq(ticketAttachments.ticketId, source.id));
+        await tx.update(ticketReplies)
+          .set({ ticketId: root.id })
+          .where(eq(ticketReplies.ticketId, source.id));
+        await tx.delete(tickets).where(eq(tickets.id, source.id));
+        await repo.update(root.id, { status: source.status });
+        merged++;
+      }
+      return merged;
+    });
   }
   async findReplyByMessageId(messageId: string): Promise<TicketReply | null> {
     const [reply] = await this.db

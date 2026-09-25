@@ -419,18 +419,24 @@ function renderTicketList() {
     const assigneeName = t.assignee
       ? t.assignee.name
       : dict.unassigned || "(Не назначен)";
-    const dateStr = new Date(t.createdAt).toLocaleTimeString([], {
+    const dateStr = new Date(t.updatedAt || t.createdAt).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
+    const latestPreview = t.latestReplyBody || t.body;
+    const latestBy = t.latestReplyBody
+      ? t.latestReplySenderType === "EMPLOYEE"
+        ? (dict.reply_from_support || "Поддержка") + ": "
+        : (dict.reply_from_customer || "Клиент") + ": "
+      : "";
 
     card.innerHTML = `
       <div class="card-meta-top">
         <span class="card-sender-email" title="${escapeHtml(t.senderEmail)}">${escapeHtml(t.senderEmail)}</span>
         <span>${dateStr}</span>
       </div>
-      <div class="card-title">${escapeHtml(t.subject)}</div>
-      <div class="card-preview">${escapeHtml(t.body)}</div>
+      <div class="card-title">${escapeHtml(t.subject)}${t.replyCount ? ` <span class="badge">${t.replyCount + 1}</span>` : ""}</div>
+      <div class="card-preview">${escapeHtml(latestBy + latestPreview)}</div>
       <div class="card-badges">
         <span class="badge ${statusClass}">${escapeHtml(statusText)}</span>
         <span class="badge ${priorityClass}">● ${escapeHtml(priorityText)}</span>

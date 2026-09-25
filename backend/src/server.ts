@@ -22,6 +22,8 @@ async function main(): Promise<void> {
     storage = new StorageService(db),
     mailboxes = new MailboxesRepository(db),
     smtp = new SmtpService(mailboxes);
+  const merged = await tickets.reconcileReplyTickets();
+  if (merged) logger.info({ merged }, "Merged existing reply tickets into conversations");
   const inbox = new ImapWorker(tickets, storage, mailboxes),
     cleanup = new CleanupWorker(db, storage),
     outbox = new OutboxWorker(db, smtp, storage);

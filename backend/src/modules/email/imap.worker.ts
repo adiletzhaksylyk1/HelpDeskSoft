@@ -99,6 +99,12 @@ export class ImapWorker {
       let ticket = await repo.findThread(refs, context?.mailboxId);
       // A matching Message-ID is not authority to append as a different customer.
       if (ticket && ticket.senderEmail.toLowerCase() !== sender) ticket = null;
+      if (!ticket)
+        ticket = await repo.findThreadByReplySubject(
+          sender,
+          context?.mailboxId,
+          parsed.subject || "",
+        );
       const body = parsed.text || "(Message contains no plain text body)";
       let replyId: string | undefined;
       if (ticket) {
