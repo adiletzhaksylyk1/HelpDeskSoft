@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="/css/base.css" />
     <link rel="stylesheet" href="/css/components.css" />
     <link rel="stylesheet" href="/css/modals.css" />
-    <link rel="stylesheet" href="/css/tickets.css" />
+    <link rel="stylesheet" href="/css/tickets.css?v=2" />
     <link rel="stylesheet" href="/css/admin.css" />
     <link rel="stylesheet" href="/css/layout.css" />
   </head>
@@ -456,7 +456,7 @@
               class="auth-field-help"
               data-i18n="password_help"
             >
-              For a new password: at least 12 characters (maximum 72 UTF-8
+              For a new password: at least 8 characters (maximum 72 UTF-8
               bytes).
             </p>
           </div>
@@ -1839,6 +1839,8 @@
             type="email"
             class="form-input"
             id="nt-email"
+            name="new-ticket-customer-email"
+            autocomplete="off"
             placeholder="client@customer.com"
             required
           />
@@ -1851,6 +1853,8 @@
             type="text"
             class="form-input"
             id="nt-subject"
+            name="new-ticket-subject"
+            autocomplete="off"
             placeholder="Brief summary of request"
             required
           />
@@ -1925,7 +1929,7 @@
             type="email"
             class="form-input"
             id="ns-email"
-            placeholder="dmitry@company.local"
+            placeholder="dmitry@astanait.edu.kz"
             required
           />
         </div>
@@ -2046,7 +2050,7 @@
             id="btn-provider-imap"
             data-ui-click="a68"
           >
-            <span></span> <strong>Standard IMAP / SMTP</strong>
+            <span></span> <strong data-i18n="mailbox_provider_imap">Standard IMAP / SMTP</strong>
           </button>
         </div>
 
@@ -2363,23 +2367,24 @@
         <!-- Test Connection Result Bar -->
         <div class="test-conn-bar">
           <div id="mb-test-status" class="status-message-row">
-            <span>Проверьте подключение перед сохранением</span>
+            <span data-i18n="mailbox_test_before_save">Test the connection before saving</span>
           </div>
           <button
             type="button"
             class="btn btn-secondary btn-sm"
             id="btn-test-conn"
             data-ui-click="a75"
+            data-i18n="mailbox_test_connection"
           >
-            Проверить подключение
+            Test connection
           </button>
         </div>
 
         <div class="modal-buttons">
-          <button type="button" class="btn btn-secondary" data-ui-click="a76">
+          <button type="button" class="btn btn-secondary" data-ui-click="a76" data-i18n="cancel">
             Cancel
           </button>
-          <button type="button" class="btn btn-primary" data-ui-click="a77">
+          <button type="button" class="btn btn-primary" data-ui-click="a77" data-i18n="mailbox_connect_save">
             Connect &amp; Save
           </button>
         </div>
@@ -2425,14 +2430,14 @@
 
     <!-- Modular Client Scripts -->
     <script src="/js/i18n.js"></script>
-    <script src="/js/i18n-extra.js"></script>
+    <script src="/js/i18n-extra.js?v=3"></script>
     <script src="/js/api.js"></script>
     <script src="/js/notifications.js"></script>
-    <script src="/js/auth.js"></script>
-    <script src="/js/tickets.js"></script>
-    <script src="/js/mailboxes.js"></script>
+    <script src="/js/auth.js?v=2"></script>
+    <script src="/js/tickets.js?v=3"></script>
+    <script src="/js/mailboxes.js?v=2"></script>
     <script src="/js/admin.js"></script>
-    <script src="/js/app.js"></script>
-    <script src="/js/events.js"></script>
+    <script src="/js/app.js?v=2"></script>
+    <script src="/js/events.js?v=2"></script>
   </body>
 </html>

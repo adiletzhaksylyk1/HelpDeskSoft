@@ -1,5 +1,10 @@
 const additionalTranslations = {
   EN: {
+    mailbox_provider_imap: "Standard IMAP / SMTP",
+    mailbox_test_connection: "Test connection",
+    mailbox_testing: "Testing...",
+    mailbox_connect_save: "Connect & Save",
+    mailbox_test_before_save: "Test the connection before saving",
     reply_from_support: "Support",
     reply_from_customer: "Customer",
     setup_password: "Set password",
@@ -11,7 +16,7 @@ const additionalTranslations = {
     invitation_help:
       "Only for account setup or password reset. Leave blank to sign in.",
     password_help:
-      "For a new password: at least 12 characters (maximum 72 UTF-8 bytes).",
+      "For a new password: at least 8 characters (maximum 72 UTF-8 bytes).",
     previous: "Previous",
     next: "Next",
     reply_queued: "Reply saved and queued for delivery",
@@ -42,6 +47,11 @@ const additionalTranslations = {
       "Up to 20 files; 10 MiB each and 25 MiB total by default.",
   },
   RU: {
+    mailbox_provider_imap: "Обычный IMAP / SMTP",
+    mailbox_test_connection: "Проверить подключение",
+    mailbox_testing: "Проверка...",
+    mailbox_connect_save: "Подключить и сохранить",
+    mailbox_test_before_save: "Проверьте подключение перед сохранением",
     reply_from_support: "Поддержка",
     reply_from_customer: "Клиент",
     setup_password: "Установить пароль",
@@ -53,7 +63,7 @@ const additionalTranslations = {
     invitation_placeholder: "Вставьте токен",
     invitation_help:
       "Только для активации или сброса пароля. Для обычного входа оставьте пустым.",
-    password_help: "Новый пароль: от 12 символов (не более 72 байт UTF-8).",
+    password_help: "Новый пароль: от 8 символов (не более 72 байт UTF-8).",
     previous: "Назад",
     next: "Далее",
     reply_queued: "Ответ сохранён и поставлен в очередь",
@@ -83,6 +93,11 @@ const additionalTranslations = {
       "До 20 файлов; по умолчанию 10 МиБ на файл и 25 МиБ всего.",
   },
   KZ: {
+    mailbox_provider_imap: "Кәдімгі IMAP / SMTP",
+    mailbox_test_connection: "Қосылымды тексеру",
+    mailbox_testing: "Тексерілуде...",
+    mailbox_connect_save: "Қосып, сақтау",
+    mailbox_test_before_save: "Сақтау алдында қосылымды тексеріңіз",
     reply_from_support: "Қолдау қызметі",
     reply_from_customer: "Клиент",
     setup_password: "Құпиясөзді орнату",
@@ -94,7 +109,7 @@ const additionalTranslations = {
     invitation_help:
       "Тек тіркелгіні белсендіру немесе құпиясөзді қалпына келтіру үшін. Кіру үшін бос қалдырыңыз.",
     password_help:
-      "Жаңа құпиясөз: кемінде 12 таңба (UTF-8 бойынша 72 байттан аспайды).",
+      "Жаңа құпиясөз: кемінде 8 таңба (UTF-8 бойынша 72 байттан аспайды).",
     previous: "Артқа",
     next: "Келесі",
     reply_queued: "Жауап сақталып, кезекке қойылды",

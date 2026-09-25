@@ -22,9 +22,9 @@ export class AuthService {
     private readonly signToken: TokenSigner,
   ) {}
   async hashPassword(password: string): Promise<string> {
-    if (password.length < 12 || Buffer.byteLength(password, "utf8") > 72)
+    if (password.length < 8 || Buffer.byteLength(password, "utf8") > 72)
       throw new ValidationError(
-        "Use at least 12 characters and at most 72 UTF-8 bytes",
+        "Use at least 8 characters and at most 72 UTF-8 bytes",
       );
     return bcrypt.hash(password, 12);
   }

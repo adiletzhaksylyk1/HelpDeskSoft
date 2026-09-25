@@ -9,7 +9,7 @@ const loginSchema = z.object({
 });
 const setupSchema = z.object({
   email: z.string().trim().email().max(254),
-  password: z.string().min(12).max(72),
+  password: z.string().min(8).max(72),
   token: z.string().length(64),
 });
 export function registerAuthRoutes(

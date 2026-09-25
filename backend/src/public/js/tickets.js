@@ -14,6 +14,8 @@ let uploadLimits = {
 };
 let searchTimer;
 let ticketSearchQuery = "";
+let newTicketSubjectEdited = false;
+let newTicketSubjectDraft = "";
 function searchTickets(event) {
   const input = document.getElementById("search-bar");
   // Credential autofill must not become a ticket filter, even if it fires input.
@@ -200,7 +202,7 @@ function startCollisionPoller(ticketId) {
 async function loadAllTickets() {
   if (!authState.token) return;
   const request = ++ticketListRequest;
-  const query = new URLSearchParams({ page: String(ticketPage), limit: "30" });
+  const query = new URLSearchParams({ page: String(ticketPage), limit: "15" });
   const scope = new URLSearchParams();
   if (activeScope === "my") scope.set("my_tickets", "true");
   if (activeScope === "unassigned") scope.set("assignee", "unassigned");
@@ -968,7 +970,7 @@ async function downloadAttachmentFile(event, ticketId, attId, filename) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (error) {
-    showTicketError(error.message);
+    showTicketError(error.message || 'Failed to download attachment');
   }
 }
 async function loadTicketAttachments(ticketId) {
@@ -1085,6 +1087,16 @@ async function loadMoreReplies(id, offset, button) {
 
 const openNewTicketModal = () => {
   const modal = document.getElementById("modal-new-ticket");
+  const subjectInput = document.getElementById("nt-subject");
+  subjectInput.value = newTicketSubjectDraft;
+  subjectInput.oninput = () => {
+    if (document.activeElement === subjectInput && !subjectInput.matches(":autofill")) {
+      newTicketSubjectEdited = true;
+      newTicketSubjectDraft = subjectInput.value;
+    } else {
+      subjectInput.value = newTicketSubjectDraft;
+    }
+  };
   let select = document.getElementById("nt-mailbox");
   if (!select) {
     const group = document.createElement("div");
@@ -1110,7 +1122,12 @@ const openNewTicketModal = () => {
 
 async function submitNewTicket() {
   const email = document.getElementById("nt-email").value.trim();
-  const subject = document.getElementById("nt-subject").value.trim();
+  const subjectInput = document.getElementById("nt-subject");
+  if (subjectInput.value !== newTicketSubjectDraft)
+    subjectInput.value = newTicketSubjectDraft;
+  const subject = newTicketSubjectEdited && !subjectInput.matches(":autofill")
+    ? newTicketSubjectDraft.trim()
+    : "";
   const priority = document.getElementById("nt-priority").value;
   const body = document.getElementById("nt-body").value.trim();
   if (!email || !subject || !body)
@@ -1129,6 +1146,11 @@ async function submitNewTicket() {
   });
   if (res.ok) {
     const created = await res.json();
+    newTicketSubjectEdited = false;
+    newTicketSubjectDraft = "";
+    document.getElementById("nt-email").value = "";
+    subjectInput.value = "";
+    document.getElementById("nt-body").value = "";
     closeModals();
     await loadAllTickets();
     selectTicket(created.id);

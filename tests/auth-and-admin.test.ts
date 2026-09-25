@@ -70,6 +70,28 @@ describe("Verified invitations and current permissions", () => {
       ).statusCode,
     ).toBe(200);
   });
+  it("accepts an eight-character password and rejects a shorter one", async () => {
+    const users = new UsersRepository(db.db);
+    const user = await users.create({
+      email: "eight@test.invalid",
+      name: "Eight",
+      role: "HelpDesk",
+    });
+    const token = await users.issueInvitation(user.id);
+    const setup = (password: string) => app.inject({
+      method: "POST",
+      url: "/api/auth/setup-password",
+      payload: { email: user.email, password, token },
+    });
+
+    expect((await setup("seven77")).statusCode).toBe(400);
+    expect((await setup("eight888")).statusCode).toBe(200);
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email: user.email, password: "eight888" },
+    })).statusCode).toBe(200);
+  });
   it("rejects expired and mismatched invitations", async () => {
     const users = new UsersRepository(db.db),
       user = await users.create({ email: "a@test.invalid", name: "A" }),

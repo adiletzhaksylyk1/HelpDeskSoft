@@ -125,6 +125,16 @@ const closeModals = () => {
   }
 };
 
+const closeTopModal = () => {
+  const modal = [...document.querySelectorAll(".modal-overlay.active")].at(-1);
+  if (!modal) return;
+  modal.classList.remove("active");
+  if (modal.id === "modal-admin" && adminModalPollInterval) {
+    clearInterval(adminModalPollInterval);
+    adminModalPollInterval = null;
+  }
+};
+
 // Global click listener for closing popovers and mobile overlays
 document.addEventListener("click", (e) => {
   const container = document.getElementById("user-pill-container");

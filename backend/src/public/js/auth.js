@@ -259,6 +259,7 @@ function updateAuthMode() {
   }
   if (password) {
     password.autocomplete = isSetup ? "new-password" : "current-password";
+    password.minLength = isSetup ? 8 : 0;
     password.dataset.i18nPlaceholder = isSetup
       ? "auth_new_password_placeholder"
       : "auth_pass_placeholder";

@@ -84,6 +84,14 @@ body.dark-theme .search-clear-btn:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
+#ticket-page {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 96px;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .ticket-scroll {
   flex: 1;
   overflow-y: auto;

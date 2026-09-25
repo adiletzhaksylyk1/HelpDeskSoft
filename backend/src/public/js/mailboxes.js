@@ -404,7 +404,10 @@ function selectMailboxProvider(provider) {
   }
 
   if (statusEl) {
-    statusEl.innerHTML = "<span>Проверьте подключение перед сохранением</span>";
+    const message = document.createElement("span");
+    message.dataset.i18n = "mailbox_test_before_save";
+    message.textContent = t("mailbox_test_before_save");
+    statusEl.replaceChildren(message);
   }
 }
 
@@ -498,7 +501,7 @@ async function testMailboxConnection(btnEl) {
   try {
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "Проверка...";
+      btn.textContent = t("mailbox_testing");
     }
     if (statusEl) {
       statusEl.innerHTML =
@@ -528,7 +531,7 @@ async function testMailboxConnection(btnEl) {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "Проверить подключение";
+      btn.textContent = t("mailbox_test_connection");
     }
   }
 }

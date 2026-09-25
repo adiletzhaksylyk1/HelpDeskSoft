@@ -51,3 +51,31 @@ test("ignores credential autofill while preserving intentional searches and clea
   await search.pressSequentially("browser@example.com");
   await typed;
 });
+
+test("ignores credential autofill in the new ticket subject", async ({ page }) => {
+  await page.goto("/");
+  const subject = page.locator("#nt-subject");
+  await subject.evaluate((input: HTMLInputElement) => {
+    input.value = "admin@example.com";
+  });
+  await page.locator("#auth-page-email").fill("browser@example.com");
+  await page.locator("#auth-page-password").fill("TestPassword123!");
+  await page.locator("#auth-page-submit-btn").click();
+  await expect(page.locator("#ticket-page")).toContainText("105");
+  await page.locator('[data-ui-click="a16"]').click();
+  await expect(subject).toHaveValue("");
+
+  await subject.evaluate((input: HTMLInputElement) => {
+    input.value = "admin@example.com";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(subject).toHaveValue("");
+
+  await subject.fill("Printer broken");
+  await subject.evaluate((input: HTMLInputElement) => {
+    input.value = "admin@example.com";
+  });
+  await page.keyboard.press("Escape");
+  await page.locator('[data-ui-click="a16"]').click();
+  await expect(subject).toHaveValue("Printer broken");
+});

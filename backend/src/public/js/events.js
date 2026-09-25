@@ -196,13 +196,13 @@ const uiActions = {
     return submitNewTicket();
   },
   a63: (event, element, args) => {
-    return closeModals();
+    return closeTopModal();
   },
   a64: (event, element, args) => {
     return submitNewStaff();
   },
   a65: (event, element, args) => {
-    return closeModals();
+    return closeTopModal();
   },
   a66: (event, element, args) => {
     return submitNewRole();
@@ -236,7 +236,7 @@ const uiActions = {
     return testMailboxConnection(element);
   },
   a76: (event, element, args) => {
-    return closeModals();
+    return closeTopModal();
   },
   a77: (event, element, args) => {
     return submitNewMailbox();
@@ -428,7 +428,7 @@ document.addEventListener("keydown", (event) => {
   if (!modal) return;
   if (event.key === "Escape") {
     event.preventDefault();
-    closeModals();
+    closeTopModal();
     return;
   }
   if (event.key === "Tab") {

@@ -16,7 +16,7 @@ test("paginates all tickets and searches older records without executable filena
   const violations: string[] = [];
   page.on("pageerror", (error) => violations.push(error.message));
   await page.locator("#ticket-next").click();
-  await expect(page.locator("#ticket-page")).toContainText("2 / 4");
+  await expect(page.locator("#ticket-page")).toContainText("2 / 7");
   await page.locator("#search-bar").focus();
   await page.locator("#search-bar").fill("Oldest searchable");
   await expect(page.locator("#ticket-page")).toContainText("(1)");
@@ -44,6 +44,51 @@ test("keeps drafts across navigation and provides keyboard dialog focus", async 
   await expect(page.locator('#modal-new-ticket [role="dialog"]')).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator("#modal-new-ticket")).not.toBeVisible();
+});
+
+test("cancel and Escape return from role creation to the roles panel", async ({
+  page,
+}) => {
+  await page.locator('[data-ui-click="a85"]').click();
+  await page.locator('[data-ui-click="a87"]').click();
+  await expect(page.locator("#modal-admin")).toBeVisible();
+  await expect(page.locator("#tab-btn-roles")).toHaveClass(/active/);
+
+  await page.locator("#btn-add-role").click();
+  await expect(page.locator("#modal-new-role")).toBeVisible();
+  await page.locator('#modal-new-role [data-ui-click="a65"]').click();
+  await expect(page.locator("#modal-new-role")).not.toBeVisible();
+  await expect(page.locator("#modal-admin")).toBeVisible();
+  await expect(page.locator("#tab-btn-roles")).toHaveClass(/active/);
+
+  await page.locator("#btn-add-role").click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#modal-new-role")).not.toBeVisible();
+  await expect(page.locator("#modal-admin")).toBeVisible();
+});
+
+test("mailbox action buttons follow the selected language", async ({ page }) => {
+  await page.locator('[data-ui-click="a85"]').click();
+  await page.locator('[data-ui-click="a88"]').click();
+  await page.locator("#btn-add-mailbox").click();
+  const modal = page.locator("#modal-new-mailbox");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator('[data-ui-click="a76"]')).toHaveText("Отмена");
+  await expect(modal.locator('[data-ui-click="a77"]')).toHaveText("Подключить и сохранить");
+  await expect(modal.locator("#btn-test-conn")).toHaveText("Проверить подключение");
+
+  await page.evaluate(() => Reflect.get(window, "setLanguage")("KZ"));
+  await expect(modal.locator('[data-ui-click="a76"]')).toHaveText("Бас тарту");
+  await expect(modal.locator('[data-ui-click="a77"]')).toHaveText("Қосып, сақтау");
+  await expect(modal.locator("#btn-provider-imap")).toContainText("Кәдімгі IMAP / SMTP");
+  await modal.locator("#btn-provider-imap").click();
+  await expect(modal.locator("#mb-test-status")).toHaveText("Сақтау алдында қосылымды тексеріңіз");
+
+  await page.evaluate(() => Reflect.get(window, "setLanguage")("EN"));
+  await expect(modal.locator('[data-ui-click="a76"]')).toHaveText("Cancel");
+  await expect(modal.locator('[data-ui-click="a77"]')).toHaveText("Connect & Save");
+  await expect(modal.locator("#btn-test-conn")).toHaveText("Test connection");
+  await expect(modal.locator("#mb-test-status")).toHaveText("Test the connection before saving");
 });
 
 test("reports detail server failures accurately and allows reopening the ticket", async ({
