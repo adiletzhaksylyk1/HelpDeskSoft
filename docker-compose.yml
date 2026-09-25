@@ -18,6 +18,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    ports: ["127.0.0.1:55432:5432"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
