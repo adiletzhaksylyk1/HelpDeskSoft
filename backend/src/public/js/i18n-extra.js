@@ -136,7 +136,7 @@ const additionalTranslations = {
     close: "Жабу",
     local_activity: "Жергілікті әрекеттер",
     attachment_limits:
-      "20 файлға дейін; әдепкіде әр файл 10 МиБ, барлығы 25 МиБ.",
+      "20 файлға дейін; әдепкіде әр файл 10 МБ, барлығы 25 МБ.",
   },
 };
 for (const [language, values] of Object.entries(additionalTranslations))
